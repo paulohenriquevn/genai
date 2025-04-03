@@ -1,81 +1,107 @@
 # GenBI: Sistema Modular de Business Intelligence Generativa
 
-Desenvolvi uma aplicação completa de Business Intelligence Generativa inspirada no WrenAI, com foco em modularidade, facilidade de uso e extensibilidade. Vamos explorar os principais componentes e funcionalidades.
+## Visão Geral
 
-## Arquitetura do Sistema
+GenBI é uma aplicação de Business Intelligence Generativa projetada com foco em processamento de dados e geração de relatórios no backend, sem interface gráfica de usuário.
 
-A aplicação GenBI foi projetada com uma arquitetura modular que separa claramente as responsabilidades, permitindo fácil manutenção e extensibilidade:
+## Principais Características
 
-1. **API REST**: Backend com FastAPI para processamento de requisições
-2. **Núcleo GenBI**: Componentes centrais para modelagem e execução de consultas
-3. **Integração LLM**: Conectores para modelos de linguagem e processamento de linguagem natural
-4. **Conectores de Dados**: Integração com diferentes fontes de dados
+- **Processamento de Consultas em Linguagem Natural**: Converte perguntas em linguagem natural para consultas SQL precisas.
+- **Geração Automática de Relatórios**: Cria relatórios com visualizações e envia por e-mail.
+- **Suporte a Múltiplas Fontes de Dados**: Conecta-se a diferentes bancos de dados.
+- **Integração com LLMs**: Utiliza modelos de linguagem para interpretação de consultas.
 
-## Principais Funcionalidades
+## Arquitetura
 
-### 1. Modelagem de Dados Flexível (MDL)
+### Componentes Principais
 
-O GenBI utiliza uma linguagem de modelagem de dados própria, inspirada no WrenAI, que permite definir:
+1. **API REST**: Interface para interação com o sistema
+2. **Processador NL-to-SQL**: Converte linguagem natural em consultas SQL
+3. **Executor de Consultas**: Processa consultas em diferentes fontes de dados
+4. **Gerador de Relatórios**: Cria visualizações e envia relatórios por e-mail
 
-- **Modelos**: Representações de tabelas ou consultas
-- **Colunas**: Definições de campos com tipos e propriedades semânticas
-- **Relacionamentos**: Conexões entre modelos (1:1, 1:N, N:1, N:N)
-- **Métricas**: Definições para análises agregadas
+## Configuração
 
-O esquema MDL facilita que o LLM compreenda a estrutura dos dados e gere consultas SQL precisas.
+### Pré-requisitos
 
-### 2. Processamento de Linguagem Natural para SQL
+- Python 3.9+
+- Bibliotecas listadas em `requirements.txt`
 
-O módulo NL-to-SQL é o coração da funcionalidade generativa:
+### Passos de Instalação
 
-- Recebe perguntas em linguagem natural
-- Usa um LLM (como GPT-4, Claude ou Gemini) para interpretar a intenção
-- Gera consultas SQL otimizadas e corretas
-- Fornece explicações das consultas geradas
+1. Clone o repositório
+2. Crie um ambiente virtual
+3. Instale as dependências:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-### 3. Motor de Execução de Consultas
+4. Configure as variáveis de ambiente:
+   - Copie `.env.example` para `.env`
+   - Preencha as configurações necessárias
 
-Um executor robusto que:
+## Uso via API
 
-- Executa consultas SQL em diferentes bancos de dados
-- Implementa cache inteligente para melhorar performance
-- Processa resultados em formato tabular
-- Gera visualizações a partir dos dados
+### Consultas em Linguagem Natural
 
-## Componentes Técnicos
+```python
+# Exemplo de chamada para consulta em linguagem natural
+POST /query/natural_language
+{
+    "question": "Quais são os 5 produtos mais vendidos no último mês?",
+    "use_cache": true,
+    "explain_sql": true
+}
+```
 
-- **API Server**: Endpoints REST para todas as operações
-- **Data Connectors**: Integração com PostgreSQL, MySQL, Snowflake, etc.
-- **LLM Integration**: Suporte para OpenAI, Anthropic e Google
-- **Query Executor**: Processamento de consultas com cache
+### Geração de Relatórios
 
-## Como Usar o GenBI
+```python
+# Exemplo de geração de relatório
+POST /reports/generate
+{
+    "title": "Relatório de Vendas Mensal",
+    "description": "Resumo de desempenho de vendas",
+    "query_ids": ["query_id_1", "query_id_2"],
+    "recipients": ["usuario@empresa.com"],
+    "smtp_config": {
+        "host": "smtp.gmail.com",
+        "port": 587,
+        "username": "seu_email@gmail.com"
+    }
+}
+```
 
-### 1. Modelagem de Dados
+## Configurações Importantes
 
-Primeiro, é necessário definir os modelos e relacionamentos usando a interface de modelagem de dados ou importando um esquema MDL existente.
+- **Arquivo de Configuração**: `config/config.json`
+  - Configurações de fonte de dados
+  - Configurações de LLM
+  - Configurações de cache
 
-### 2. Consultas em Linguagem Natural
+- **Arquivo de Configuração de E-mail**: `config/email_config.json`
+  - Configurações de SMTP
+  - Remetentes e destinatários padrão
 
-Os usuários podem fazer perguntas como:
-- "Quais são os 5 produtos mais vendidos no último mês?"
-- "Qual é a média de vendas por região nos últimos 6 meses?"
-- "Mostre-me o produto com maior margem de lucro em cada categoria"
+## Segurança
 
-### 3. Visualizações
+- Use variáveis de ambiente para credenciais sensíveis
+- Habilite TLS para conexões SMTP
+- Utilize senhas de aplicativo para serviços como Gmail
 
-Após receber os resultados, os usuários podem gerar visualizações como:
-- Gráficos de barras para comparações
-- Gráficos de linha para tendências temporais
-- Gráficos de pizza para distribuições
-- Gráficos de dispersão para correlações
+## Limitações
 
-## Vantagens do GenBI
+- Sem interface gráfica de usuário
+- Todas as interações via API REST
+- Requer conhecimento técnico para configuração
 
-1. **Acessibilidade**: Usuários não-técnicos podem obter insights sem conhecer SQL
-2. **Modularidade**: Arquitetura que permite substituir componentes como o provedor LLM
-3. **Extensibilidade**: Facilidade para adicionar novos conectores de dados ou visualizações
-4. **Performance**: Sistema de cache que reduz tempo de resposta e custos de API
----
+## Contribuição
 
-O GenBI é uma plataforma completa que democratiza o acesso a dados, permitindo que qualquer pessoa na organização faça perguntas complexas usando linguagem natural, transformando a maneira como as empresas extraem valor de seus dados.
+1. Faça um fork do repositório
+2. Crie uma branch para sua feature
+3. Commit suas alterações
+4. Abra um Pull Request
+
+## Licença
+
+[Inserir detalhes da licença]
