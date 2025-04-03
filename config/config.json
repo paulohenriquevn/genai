@@ -1,0 +1,26 @@
+{
+    "data_sources": [
+        {
+            "type": "sqlite",
+            "config": {
+                "database": "database.db"
+            }
+        }
+    ],
+    "llm": {
+        "provider": "openai",
+        "config": {
+            "api_key": "YOUR_OPENAI_API_KEY_HERE",
+            "model": "gpt-4o"
+        }
+    },
+    "cache": {
+        "enabled": true,
+        "ttl": 3600,
+        "dir": "cache"
+    },
+    "catalog": {
+        "models": [],
+        "relationships": []
+    }
+}

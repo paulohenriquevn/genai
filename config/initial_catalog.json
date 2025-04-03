@@ -1,0 +1,217 @@
+{
+    "models": [
+        {
+            "name": "customers",
+            "description": "Clientes da empresa",
+            "source": {
+                "type": "table",
+                "value": "customers",
+                "schema": "main"
+            },
+            "columns": [
+                {
+                    "name": "customer_id",
+                    "type": "number",
+                    "description": "ID único do cliente",
+                    "semanticType": "id"
+                },
+                {
+                    "name": "name",
+                    "type": "string",
+                    "description": "Nome completo do cliente",
+                    "semanticType": "name"
+                },
+                {
+                    "name": "email",
+                    "type": "string",
+                    "description": "Endereço de e-mail do cliente"
+                },
+                {
+                    "name": "city",
+                    "type": "string",
+                    "description": "Cidade do cliente",
+                    "semanticType": "address"
+                },
+                {
+                    "name": "country",
+                    "type": "string",
+                    "description": "País do cliente",
+                    "semanticType": "address"
+                },
+                {
+                    "name": "created_at",
+                    "type": "datetime",
+                    "description": "Data de cadastro do cliente",
+                    "semanticType": "date"
+                }
+            ],
+            "primaryKey": [
+                "customer_id"
+            ]
+        },
+        {
+            "name": "products",
+            "description": "Catálogo de produtos",
+            "source": {
+                "type": "table",
+                "value": "products",
+                "schema": "main"
+            },
+            "columns": [
+                {
+                    "name": "product_id",
+                    "type": "number",
+                    "description": "ID único do produto",
+                    "semanticType": "id"
+                },
+                {
+                    "name": "name",
+                    "type": "string",
+                    "description": "Nome do produto",
+                    "semanticType": "name"
+                },
+                {
+                    "name": "category",
+                    "type": "string",
+                    "description": "Categoria do produto",
+                    "semanticType": "category"
+                },
+                {
+                    "name": "price",
+                    "type": "number",
+                    "description": "Preço do produto em reais",
+                    "semanticType": "price",
+                    "format": "currency"
+                },
+                {
+                    "name": "cost",
+                    "type": "number",
+                    "description": "Custo do produto em reais",
+                    "semanticType": "price",
+                    "format": "currency"
+                }
+            ],
+            "primaryKey": [
+                "product_id"
+            ]
+        },
+        {
+            "name": "orders",
+            "description": "Pedidos realizados pelos clientes",
+            "source": {
+                "type": "table",
+                "value": "orders",
+                "schema": "main"
+            },
+            "columns": [
+                {
+                    "name": "order_id",
+                    "type": "number",
+                    "description": "ID único do pedido",
+                    "semanticType": "id"
+                },
+                {
+                    "name": "customer_id",
+                    "type": "number",
+                    "description": "ID do cliente que fez o pedido",
+                    "semanticType": "id"
+                },
+                {
+                    "name": "order_date",
+                    "type": "date",
+                    "description": "Data em que o pedido foi realizado",
+                    "semanticType": "date"
+                },
+                {
+                    "name": "status",
+                    "type": "string",
+                    "description": "Status atual do pedido",
+                    "semanticType": "category"
+                }
+            ],
+            "primaryKey": [
+                "order_id"
+            ]
+        },
+        {
+            "name": "order_items",
+            "description": "Itens incluídos em cada pedido",
+            "source": {
+                "type": "table",
+                "value": "order_items",
+                "schema": "main"
+            },
+            "columns": [
+                {
+                    "name": "order_item_id",
+                    "type": "number",
+                    "description": "ID único do item do pedido",
+                    "semanticType": "id"
+                },
+                {
+                    "name": "order_id",
+                    "type": "number",
+                    "description": "ID do pedido ao qual o item pertence",
+                    "semanticType": "id"
+                },
+                {
+                    "name": "product_id",
+                    "type": "number",
+                    "description": "ID do produto",
+                    "semanticType": "id"
+                },
+                {
+                    "name": "quantity",
+                    "type": "number",
+                    "description": "Quantidade do produto",
+                    "semanticType": "count"
+                },
+                {
+                    "name": "price",
+                    "type": "number",
+                    "description": "Preço unitário do produto no momento da compra",
+                    "semanticType": "price",
+                    "format": "currency"
+                }
+            ],
+            "primaryKey": [
+                "order_item_id"
+            ]
+        }
+    ],
+    "relationships": [
+        {
+            "name": "order_to_customer",
+            "description": "Relação entre pedidos e clientes",
+            "type": "MANY_TO_ONE",
+            "models": [
+                "orders",
+                "customers"
+            ],
+            "condition": "orders.customer_id = customers.customer_id",
+            "joinType": "INNER"
+        },
+        {
+            "name": "item_to_order",
+            "description": "Relação entre itens e pedidos",
+            "type": "MANY_TO_ONE",
+            "models": [
+                "order_items",
+                "orders"
+            ],
+            "condition": "order_items.order_id = orders.order_id",
+            "joinType": "INNER"
+        },
+        {
+            "name": "item_to_product",
+            "description": "Relação entre itens e produtos",
+            "type": "MANY_TO_ONE",
+            "models": [
+                "order_items",
+                "products"
+            ],
+            "condition": "order_items.product_id = products.product_id",
+            "joinType": "INNER"
+        }
+    ]
+}
