@@ -2,7 +2,8 @@
 GenBI API Server - Módulo da API REST para o sistema GenBI
 """
 
-from fastapi import FastAPI, HTTPException, Query, Body, Depends, status
+from app.llm_integration.nl_processor import NLtoSQLProcessor
+from fastapi import FastAPI, HTTPException, Query, Body, Depends, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse
 from pydantic import BaseModel, Field
@@ -11,7 +12,10 @@ import pandas as pd
 import json
 import os
 import logging
-from datetime import datetime
+import time
+import random
+import uuid
+from datetime import datetime, timedelta
 
 # Configuração de logging
 logging.basicConfig(level=logging.INFO,
@@ -63,17 +67,126 @@ app = FastAPI(
 )
 
 # Configuração de CORS
+allowed_origins = os.environ.get("ALLOWED_ORIGINS", "http://localhost:8000,http://localhost:3000").split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Em produção, limitar aos domínios permitidos
+    allow_origins=allowed_origins,  # Lista de domínios permitidos
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
 )
 
-# Armazenamento em memória para resultados de consultas recentes
-# Em produção, usar um armazenamento persistente
-query_results = {}
+# Sistema de armazenamento de resultados com expiração
+class QueryResultsStorage:
+    """Classe para armazenamento de resultados de consultas com expiração automática"""
+    
+    def __init__(self, ttl: int = 3600):
+        """
+        Inicializa o armazenamento
+        
+        Args:
+            ttl: Tempo de vida dos resultados em segundos (padrão: 1 hora)
+        """
+        self.storage = {}
+        self.ttl = ttl
+        
+    def set(self, key: str, value: Any):
+        """Armazena um resultado com timestamp"""
+        self.storage[key] = {
+            'value': value,
+            'timestamp': time.time()
+        }
+        
+    def get(self, key: str) -> Optional[Any]:
+        """Recupera um resultado se existir e não estiver expirado"""
+        if key not in self.storage:
+            return None
+            
+        item = self.storage[key]
+        # Verificar se expirou
+        if time.time() - item['timestamp'] > self.ttl:
+            del self.storage[key]
+            return None
+            
+        return item['value']
+        
+    def clean_expired(self) -> int:
+        """Remove itens expirados e retorna o número de itens removidos"""
+        now = time.time()
+        expired_keys = [
+            k for k, v in self.storage.items() 
+            if now - v['timestamp'] > self.ttl
+        ]
+        
+        for key in expired_keys:
+            del self.storage[key]
+            
+        return len(expired_keys)
+        
+    def clear(self):
+        """Limpa todo o armazenamento"""
+        count = len(self.storage)
+        self.storage = {}
+        return count
+
+# Inicializar armazenamento de resultados
+query_results_storage = QueryResultsStorage(ttl=3600)  # 1 hora de TTL
+
+# Definir middleware para limitar taxa de requisições
+class RateLimiter:
+    """Middleware para limitar taxa de requisições"""
+    
+    def __init__(self, requests_per_minute: int = 60):
+        self.requests_per_minute = requests_per_minute
+        self.clients = {}
+        
+    async def __call__(self, request: Request, call_next):
+        # Obter IP do cliente
+        client_ip = request.client.host
+        
+        # Verificar se o cliente já está no dicionário
+        if client_ip not in self.clients:
+            self.clients[client_ip] = {
+                'count': 0,
+                'reset_time': time.time() + 60  # 1 minuto
+            }
+        
+        # Verificar se o tempo expirou e reiniciar contagem
+        if time.time() > self.clients[client_ip]['reset_time']:
+            self.clients[client_ip] = {
+                'count': 0,
+                'reset_time': time.time() + 60  # 1 minuto
+            }
+        
+        # Incrementar contagem
+        self.clients[client_ip]['count'] += 1
+        
+        # Verificar se excedeu limite
+        if self.clients[client_ip]['count'] > self.requests_per_minute:
+            return JSONResponse(
+                status_code=429,
+                content={
+                    "detail": "Muitas requisições. Tente novamente mais tarde."
+                }
+            )
+        
+        # Limpar clientes expirados ocasionalmente
+        if random.random() < 0.01:  # 1% de chance de limpar
+            self._clean_expired_clients()
+        
+        # Continuar com a requisição
+        return await call_next(request)
+    
+    def _clean_expired_clients(self):
+        """Limpa clientes expirados"""
+        now = time.time()
+        expired_clients = [
+            ip for ip, data in self.clients.items()
+            if now > data['reset_time']
+        ]
+        
+        for ip in expired_clients:
+            del self.clients[ip]
 
 # Classe para inicialização e gerenciamento do sistema GenBI
 class GenBISystem:
@@ -225,11 +338,10 @@ class GenBISystem:
             explanation = self.nl_processor.explain_sql(sql, question)
             
         # Gerar ID único para a consulta
-        import uuid
         query_id = str(uuid.uuid4())
         
-        # Armazenar resultados em memória
-        query_results[query_id] = result
+        # Armazenar resultados no sistema de armazenamento
+        query_results_storage.set(query_id, result)
         
         # Construir resposta
         response = {
@@ -265,15 +377,24 @@ class GenBISystem:
         Returns:
             Dict: Resultados da consulta e metadados
         """
+        # Validar SQL para segurança
+        unsafe_patterns = [
+            "DROP ", "DELETE ", "TRUNCATE ", "UPDATE ", "INSERT ", 
+            "ALTER ", "CREATE ", "GRANT ", "REVOKE ", "PRAGMA ", 
+            "ATTACH ", "DETACH "
+        ]
+        
+        if any(pattern.upper() in query.upper() for pattern in unsafe_patterns):
+            raise ValueError("Consulta SQL contém comandos potencialmente perigosos")
+            
         # Executar consulta
         result = self.query_executor.execute(query, params, use_cache=use_cache)
         
         # Gerar ID único para a consulta
-        import uuid
         query_id = str(uuid.uuid4())
         
-        # Armazenar resultados em memória
-        query_results[query_id] = result
+        # Armazenar resultados no sistema de armazenamento
+        query_results_storage.set(query_id, result)
         
         # Construir resposta
         response = {
@@ -308,31 +429,73 @@ class GenBISystem:
         from app.query_executor.query_executor import VisualizationGenerator
         
         # Verificar se a consulta existe
-        if query_id not in query_results:
-            raise ValueError(f"Consulta com ID {query_id} não encontrada")
+        result = query_results_storage.get(query_id)
+        if not result:
+            raise ValueError(f"Consulta com ID {query_id} não encontrada ou expirada")
             
-        # Obter resultados
-        result = query_results[query_id]
-        
+        # Validar tipo de visualização
+        allowed_viz_types = ['bar', 'line', 'pie', 'scatter', 'table']
+        if viz_type not in allowed_viz_types:
+            raise ValueError(f"Tipo de visualização '{viz_type}' não suportado. Tipos suportados: {', '.join(allowed_viz_types)}")
+            
         # Inicializar gerador de visualização
         viz_generator = VisualizationGenerator()
         
+        # Sanitizar opções para evitar injeção de código
+        safe_options = options or {}
+        
+        # Verificar tipos de valores nas opções
+        for key, value in safe_options.items():
+            if not isinstance(value, (str, int, float, bool, list, dict, type(None))):
+                safe_options[key] = str(value)
+                
         # Gerar HTML
-        return viz_generator.generate_visualization_code(
+        html_result = viz_generator.generate_visualization_code(
             result=result,
             viz_type=viz_type,
-            options=options
+            options=safe_options
         )
+        
+        return html_result
 
 # Instância do sistema GenBI
 genbi_system = None
+
+# Configurar middleware de rate limiting
+# Rate limiter será adicionado manualmente, não via add_middleware
+rate_limit = int(os.environ.get("RATE_LIMIT_PER_MINUTE", "60"))
+rate_limiter = RateLimiter(requests_per_minute=rate_limit)
+
+# Adicionar middleware manualmente
+@app.middleware("http")
+async def rate_limiting_middleware(request: Request, call_next):
+    return await rate_limiter(request, call_next)
 
 @app.on_event("startup")
 async def startup_event():
     """Evento de inicialização do servidor"""
     global genbi_system
-    genbi_system = GenBISystem()
-    logger.info("Sistema GenBI inicializado")
+    
+    # Carregar configuração do ambiente se disponível
+    config_path = os.environ.get("GENBI_CONFIG_PATH", "config/config.json")
+    
+    # Inicializar sistema GenBI
+    genbi_system = GenBISystem(config_path=config_path)
+    logger.info(f"Sistema GenBI inicializado com configuração de {config_path}")
+    
+    # Agendar tarefa de limpeza de cache
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        """Evento de finalização do servidor"""
+        logger.info("Finalizando sistema GenBI")
+        
+        # Limpar recursos
+        if hasattr(genbi_system, 'data_connector') and genbi_system.data_connector:
+            genbi_system.data_connector.disconnect()
+            
+        # Limpar cache de consultas em memória
+        removed = query_results_storage.clear()
+        logger.info(f"Cache limpo: {removed} itens removidos")
 
 # Endpoint para verificação de saúde
 @app.get("/health")

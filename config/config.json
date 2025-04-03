@@ -1,26 +1,48 @@
 {
-    "data_sources": [
-        {
-            "type": "sqlite",
-            "config": {
-                "database": "database.db"
-            }
-        }
-    ],
-    "llm": {
-        "provider": "openai",
-        "config": {
-            "api_key": "YOUR_OPENAI_API_KEY_HERE",
-            "model": "gpt-4o"
-        }
-    },
-    "cache": {
-        "enabled": true,
-        "ttl": 3600,
-        "dir": "cache"
-    },
-    "catalog": {
-        "models": [],
-        "relationships": []
+  "data_sources": [
+    {
+      "type": "sqlite",
+      "config": {
+        "database": "database.db"
+      }
     }
+  ],
+  "llm": {
+    "provider": "openai",
+    "config": {
+      "api_key": "",
+      "model": "gpt-4o"
+    }
+  },
+  "cache": {
+    "enabled": true,
+    "ttl": 3600,
+    "dir": "cache"
+  },
+  "catalog": {
+    "models": [
+      {
+        "name": "sales_summary",
+        "description": "Resumo de vendas por categoria",
+        "columns": [
+          {
+            "name": "categoria",
+            "type": "string",
+            "semanticType": "category"
+          },
+          {
+            "name": "receita_total",
+            "type": "number",
+            "semanticType": "amount"
+          },
+          {
+            "name": "quantidade_vendida",
+            "type": "number",
+            "semanticType": "count"
+          }
+        ]
+      }
+    ],
+    "relationships": null
+  }
 }

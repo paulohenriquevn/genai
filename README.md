@@ -2,106 +2,167 @@
 
 ## Visão Geral
 
-GenBI é uma aplicação de Business Intelligence Generativa projetada com foco em processamento de dados e geração de relatórios no backend, sem interface gráfica de usuário.
+GenBI é uma aplicação de Business Intelligence Generativa projetada para processar perguntas em linguagem natural, convertê-las em consultas SQL e gerar visualizações de dados automaticamente.
 
 ## Principais Características
 
-- **Processamento de Consultas em Linguagem Natural**: Converte perguntas em linguagem natural para consultas SQL precisas.
-- **Geração Automática de Relatórios**: Cria relatórios com visualizações e envia por e-mail.
-- **Suporte a Múltiplas Fontes de Dados**: Conecta-se a diferentes bancos de dados.
-- **Integração com LLMs**: Utiliza modelos de linguagem para interpretação de consultas.
+- **Processamento de Consultas em Linguagem Natural**: Converte perguntas em linguagem natural para consultas SQL precisas
+- **Geração Automática de Visualizações**: Cria gráficos e tabelas interativas baseadas nos resultados das consultas
+- **API RESTful**: Interface para integração com outros sistemas
+- **Modo Interativo**: Interface de linha de comando para consultas ad-hoc
+- **Sistema de Cache**: Armazena resultados de consultas para maior performance
+- **Segurança Integrada**: Validação de entradas, rate limiting e proteção contra injeção SQL
 
 ## Arquitetura
 
 ### Componentes Principais
 
-1. **API REST**: Interface para interação com o sistema
-2. **Processador NL-to-SQL**: Converte linguagem natural em consultas SQL
-3. **Executor de Consultas**: Processa consultas em diferentes fontes de dados
-4. **Gerador de Relatórios**: Cria visualizações e envia relatórios por e-mail
+1. **API REST (app/api_server.py)**: Interface para interação com o sistema
+2. **Processador NL-to-SQL (app/llm_integration/nl_processor.py)**: Converte linguagem natural em consultas SQL
+3. **Executor de Consultas (app/query_executor/query_executor.py)**: Processa consultas SQL
+4. **Gerador de Visualizações (app/query_executor/query_executor.py)**: Cria visualizações interativas
+5. **Conector de Dados (app/data_connector/data_connector.py)**: Gerencia conexões com bancos de dados
 
-## Configuração
+## Requisitos
 
-### Pré-requisitos
+- Python 3.8+
+- OpenAI API Key
+- SQLite (banco de dados padrão, outros podem ser configurados)
+- Bibliotecas Python: fastapi, uvicorn, openai, pandas, plotly
 
-- Python 3.9+
-- Bibliotecas listadas em `requirements.txt`
+## Instalação e Configuração
 
-### Passos de Instalação
+1. Clone o repositório:
+   ```bash
+   git clone <url-do-repositorio>
+   cd genbi
+   ```
 
-1. Clone o repositório
-2. Crie um ambiente virtual
+2. Crie e ative um ambiente virtual:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # No Windows: venv\Scripts\activate
+   ```
+
 3. Instale as dependências:
    ```bash
    pip install -r requirements.txt
    ```
 
-4. Configure as variáveis de ambiente:
-   - Copie `.env.example` para `.env`
-   - Preencha as configurações necessárias
+4. Configure a API key da OpenAI:
+   ```bash
+   export OPENAI_API_KEY="sua-api-key-aqui"
+   ```
 
-## Uso via API
+5. Configure o banco de dados de exemplo:
+   ```bash
+   python run.py --setup-db
+   ```
+
+## Uso
+
+### Iniciar o Servidor API
+
+```bash
+python run.py --server
+```
+
+O servidor estará disponível em `http://localhost:8000`.
+
+### Modo Interativo
+
+```bash
+python run.py --interactive
+```
+
+Este modo permite fazer perguntas em linguagem natural diretamente pelo terminal.
+
+### Executar Testes
+
+```bash
+python run.py --test
+```
+
+## Exemplos de Uso
 
 ### Consultas em Linguagem Natural
 
-```python
-# Exemplo de chamada para consulta em linguagem natural
+Aqui estão exemplos de perguntas que o sistema pode responder:
+
+- "Qual é o faturamento total por categoria de produto?"
+- "Quais são os 5 produtos mais vendidos?"
+- "Quanto vendemos no último mês?"
+- "Quais clientes fizeram mais compras?"
+
+### API REST
+
+Endpoint para consultas em linguagem natural:
+```http
 POST /query/natural_language
 {
-    "question": "Quais são os 5 produtos mais vendidos no último mês?",
+    "question": "Quais são os 5 produtos mais vendidos?",
     "use_cache": true,
     "explain_sql": true
 }
 ```
 
-### Geração de Relatórios
-
-```python
-# Exemplo de geração de relatório
-POST /reports/generate
+Endpoint para visualização:
+```http
+POST /visualization
 {
-    "title": "Relatório de Vendas Mensal",
-    "description": "Resumo de desempenho de vendas",
-    "query_ids": ["query_id_1", "query_id_2"],
-    "recipients": ["usuario@empresa.com"],
-    "smtp_config": {
-        "host": "smtp.gmail.com",
-        "port": 587,
-        "username": "seu_email@gmail.com"
+    "query_id": "01234567-89ab-cdef-0123-456789abcdef",
+    "type": "bar",
+    "options": {
+        "title": "Top 5 Produtos Vendidos",
+        "x_column": "produto",
+        "y_column": "quantidade_vendida"
     }
 }
 ```
 
-## Configurações Importantes
+## Configurações
 
-- **Arquivo de Configuração**: `config/config.json`
-  - Configurações de fonte de dados
-  - Configurações de LLM
-  - Configurações de cache
+O sistema usa o arquivo `config/config.json` para configurações principais:
 
-- **Arquivo de Configuração de E-mail**: `config/email_config.json`
-  - Configurações de SMTP
-  - Remetentes e destinatários padrão
+- **Conexão com Banco de Dados**: Tipo, credenciais e parâmetros de conexão
+- **Configuração de LLM**: Provedor, modelo e parâmetros
+- **Sistema de Cache**: TTL e diretório
+- **Catálogo de Dados**: Definição de modelos e relações
+
+## Variáveis de Ambiente
+
+- `OPENAI_API_KEY`: Chave de API da OpenAI (obrigatória)
+- `GENBI_CONFIG_PATH`: Caminho para o arquivo de configuração (opcional)
+- `ALLOWED_ORIGINS`: Lista de origens permitidas para CORS (opcional)
+- `RATE_LIMIT_PER_MINUTE`: Limite de requisições por minuto por IP (opcional)
 
 ## Segurança
 
-- Use variáveis de ambiente para credenciais sensíveis
-- Habilite TLS para conexões SMTP
-- Utilize senhas de aplicativo para serviços como Gmail
+- **API Key Segura**: Use variáveis de ambiente para a API key da OpenAI
+- **Rate Limiting**: Proteção contra abuso da API
+- **Validação SQL**: Bloqueia comandos SQL potencialmente perigosos
+- **CORS Configurável**: Restrinja o acesso à API para domínios específicos
 
-## Limitações
+## Personalização
 
-- Sem interface gráfica de usuário
-- Todas as interações via API REST
-- Requer conhecimento técnico para configuração
+### Adicionar Novos Provedores de LLM
 
-## Contribuição
+Implemente novas classes em `app/llm_integration/llm_client.py` seguindo o padrão da interface `LLMClient`.
 
-1. Faça um fork do repositório
-2. Crie uma branch para sua feature
-3. Commit suas alterações
-4. Abra um Pull Request
+### Conectar a Outros Bancos de Dados
+
+Implemente novos conectores em `app/data_connector/data_connector.py` seguindo o padrão da interface `DataConnector`.
+
+## Limitações Atuais
+
+- Suporte apenas para banco de dados SQLite (outros bancos podem ser adicionados)
+- Visualizações limitadas aos tipos: bar, line, pie, scatter e table
+- Não suporta autenticação de usuários (deve ser implementada para ambientes de produção)
 
 ## Licença
 
-[Inserir detalhes da licença]
+MIT License
+
+## Contribuidores
+
+- [Seu Nome] - Desenvolvedor Principal
