@@ -1,15 +1,11 @@
-import os
 import logging
-from typing import Dict, List, Any, Optional, Union
+from typing import Dict
 
 import pandas as pd
 import duckdb
 
 from connector.semantic_layer_schema import (
-    ColumnSchema,
-    RelationSchema,
     SemanticSchema, 
-    ColumnType, 
     TransformationType, 
     TransformationRule
 )
@@ -248,78 +244,3 @@ def create_view_from_sources(
     finally:
         # Ensure connection is closed
         view_loader.close()
-
-# Example usage and demonstration
-def example_view_loading():
-    """
-    Demonstra o uso do carregamento de view semântica.
-    """
-    # Cria um esquema semântico para uma visão de vendas
-    sales_view_schema = SemanticSchema(
-        name='sales_analysis',
-        description='Dados combinados de vendas e clientes',
-        source_type='csv',
-        columns=[
-            ColumnSchema(name='sale_id', type=ColumnType.INTEGER, primary_key=True),
-            ColumnSchema(name='customer_id', type=ColumnType.INTEGER),
-            ColumnSchema(name='product_name', type=ColumnType.STRING),
-            ColumnSchema(name='sale_amount', type=ColumnType.FLOAT),
-            ColumnSchema(name='sale_date', type=ColumnType.DATE)
-        ],
-        relations=[
-            RelationSchema(
-                source_table='sales', 
-                source_column='customer_id',
-                target_table='customers', 
-                target_column='customer_id'
-            )
-        ],
-        transformations=[
-            TransformationRule(
-                type=TransformationType.FILLNA, 
-                column='sale_amount', 
-                params={'value': 0.0}
-            ),
-            TransformationRule(
-                type=TransformationType.CONVERT_TYPE, 
-                column='sale_date', 
-                params={'type': 'datetime', 'format': '%Y-%m-%d'}
-            )
-        ]
-    )
-
-    # DataFrames de exemplo
-    sales_df = pd.DataFrame({
-        'sale_id': [1, 2, 3, 4],
-        'customer_id': [101, 102, 103, 104],
-        'product_name': ['Laptop', 'Phone', 'Tablet', 'Watch'],
-        'sale_amount': [1200.0, 800.0, 500.0, None],
-        'sale_date': ['2023-01-15', '2023-02-20', '2023-03-10', '2023-04-05']
-    })
-
-    customers_df = pd.DataFrame({
-        'customer_id': [101, 102, 103, 104],
-        'customer_name': ['Alice', 'Bob', 'Charlie', 'David'],
-        'customer_city': ['New York', 'San Francisco', 'Chicago', 'Boston']
-    })
-
-    # Dicionário de fontes
-    sources = {
-        'sales': sales_df,
-        'customers': customers_df
-    }
-
-    try:
-        # Cria a view
-        view_result = create_view_from_sources(sales_view_schema, sources)
-        
-        # Imprime o resultado da view
-        print("Resultado da View de Vendas:")
-        print(view_result)
-        
-    except Exception as e:
-        print(f"Erro ao criar view: {e}")
-
-# Optional: Run the example if this script is executed directly
-if __name__ == '__main__':
-    example_view_loading()

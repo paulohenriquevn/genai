@@ -1,580 +1,467 @@
-# Documentação Técnica: Sistema de Conectores de Dados
+# Documentação do Sistema de Conexão e Transformação de Dados
 
 ## Visão Geral
 
-Este sistema fornece uma infraestrutura robusta para conexão, leitura e transformação de dados de múltiplas fontes, com suporte avançado a metadados. A arquitetura é baseada em classes abstratas e padrões de design que permitem a extensibilidade e a manutenção eficiente.
+Este sistema oferece uma infraestrutura robusta para conexão, transformação e análise de dados provenientes de múltiplas fontes. A arquitetura foi desenvolvida com foco em flexibilidade, extensibilidade e capacidade de lidar com metadados semânticos, permitindo uma melhor compreensão e utilização dos dados.
 
-## Características Principais
+## Componentes Principais
 
-- **Suporte a múltiplas fontes de dados**: CSV, PostgreSQL e integração com DuckDB
-- **Gestão de metadados**: Suporte para definição, armazenamento e utilização de metadados em nível de dataset e coluna
-- **Transformações inteligentes**: Conversão automática de tipos baseada em metadados
-- **Suporte a consultas SQL**: Para todas as fontes de dados, incluindo arquivos CSV
-- **Operação em diretórios**: Capacidade de processar múltiplos arquivos CSV em um diretório
-- **Tratamento de erros robusto**: Exceções específicas e logging detalhado
+O sistema é composto por quatro módulos principais:
 
-## Arquitetura do Sistema
+1. **Camada Semântica**: Define esquemas e estruturas para descrever dados semanticamente
+2. **Conectores de Dados**: Implementa interfaces para diferentes fontes de dados
+3. **Metadados**: Gerencia informações descritivas sobre conjuntos de dados
+4. **Carregador de Visualizações**: Cria visualizações personalizadas a partir dos dados carregados
 
-O sistema está organizado em dois módulos principais:
-
-1. **Módulo de metadados** (`metadata.py`): Responsável pela definição e gestão de metadados
-2. **Módulo de conectores** (`connectors.py`): Implementa os diversos conectores de dados
-
-### Diagrama de Classes
+### Diagrama de Arquitetura
 
 ```
-┌─────────────────┐      ┌───────────────────┐      ┌─────────────────────┐
-│ ColumnMetadata  │      │  DatasetMetadata  │      │  MetadataRegistry   │
-└─────────────────┘      └───────────────────┘      └─────────────────────┘
-        ▲                        ▲                            ▲
-        │                        │                            │
-        └──────────┬─────────────┴────────────┐              │
-                   │                          │              │
-                   ▼                          ▼              ▼
-          ┌─────────────────┐         ┌──────────────┐     ┌─────────────────────┐
-          │ DataSourceConfig│◄────────┤DataConnector │     │DataConnectorFactory │
-          └─────────────────┘         └──────────────┘     └─────────────────────┘
-                                             ▲
-                                             │
-                   ┌───────────┬─────────────┴─────────────┐
-                   │           │                           │
-                   ▼           ▼                           ▼
-          ┌─────────────┐ ┌──────────────┐      ┌───────────────────┐
-          │CsvConnector │ │PostgresConn. │      │ DuckDBCsvConnector│
-          └─────────────┘ └──────────────┘      └───────────────────┘
+┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
+│  Conectores de  │     │     Camada      │     │   Metadados     │
+│     Dados       │◄────┤    Semântica    │────►│                 │
+└────────┬────────┘     └─────────────────┘     └────────┬────────┘
+         │                                               │
+         │              ┌─────────────────┐              │
+         └─────────────►│   Carregador    │◄─────────────┘
+                        │      de         │
+                        │  Visualizações  │
+                        └─────────────────┘
 ```
 
-## Módulo de Metadados
+## Camada Semântica (semantic_layer_schema.py)
+
+Este módulo define as estruturas fundamentais para representar dados semanticamente.
 
 ### Classes Principais
 
-#### `ColumnMetadata`
+- **ColumnType**: Enumeração dos tipos de colunas suportados (`STRING`, `INTEGER`, `FLOAT`, etc.)
+- **TransformationType**: Enumeração dos tipos de transformações disponíveis (`RENAME`, `FILLNA`, `CONVERT_TYPE`, etc.)
+- **ColumnSchema**: Estrutura para metadados de colunas individuais
+- **RelationSchema**: Define relacionamentos entre tabelas e colunas
+- **TransformationRule**: Define regras de transformação para colunas
+- **SemanticSchema**: Esquema semântico completo para fontes de dados
 
-Define metadados para uma coluna específica de dados.
-
-**Atributos principais:**
-- `name`: Nome da coluna no dataset
-- `description`: Descrição da finalidade/significado da coluna
-- `data_type`: Tipo de dados esperado (str, int, float, date, etc)
-- `format`: Formato específico (ex: YYYY-MM-DD para datas)
-- `alias`: Nomes alternativos para a coluna
-- `aggregations`: Agregações recomendadas (sum, avg, etc)
-- `validation`: Regras de validação (min, max, etc)
-- `display`: Preferências de exibição (precision, unit, etc)
-- `tags`: Tags para categorização
-
-**Métodos principais:**
-- `from_dict()`: Cria uma instância a partir de um dicionário
-- `to_dict()`: Converte os metadados para um dicionário
-
-#### `DatasetMetadata`
-
-Armazena metadados para um dataset completo, incluindo coleções de `ColumnMetadata`.
-
-**Atributos principais:**
-- `name`: Nome do dataset
-- `description`: Descrição do dataset
-- `source`: Origem dos dados
-- `columns`: Dicionário de metadados de colunas
-- `created_at`/`updated_at`: Timestamps de criação e atualização
-- `version`: Versão dos metadados
-- `_alias_lookup`: Mapeamento interno de aliases para nomes reais de colunas
-
-**Métodos principais:**
-- `from_dict()`, `from_json()`, `from_file()`: Métodos para criar instâncias
-- `to_dict()`, `to_json()`, `save_to_file()`: Métodos para serialização
-- `get_column_metadata()`: Obtém metadados de uma coluna específica
-- `get_columns_by_tag()`, `get_columns_by_type()`: Filtros por tag e tipo
-- `resolve_column_name()`: Resolve o nome real a partir de um alias
-
-#### `MetadataRegistry`
-
-Registro global (singleton) que gerencia metadados para múltiplos datasets.
-
-**Métodos principais:**
-- `register_metadata()`, `register_from_dict()`, `register_from_json()`, `register_from_file()`: Métodos para registro
-- `get_metadata()`: Obtém metadados para um dataset específico
-- `remove_metadata()`: Remove metadados para um dataset
-- `list_datasets()`: Lista todos os datasets registrados
-- `clear()`: Remove todos os metadados
-
-## Módulo de Conectores
-
-### Classes de Exceção
-
-- `DataConnectionException`: Exceção para problemas de conexão
-- `DataReadException`: Exceção para problemas de leitura de dados
-- `ConfigurationException`: Exceção para problemas com configurações
-
-### Classes Principais
-
-#### `DataSourceConfig`
-
-Configuração de fonte de dados com suporte a metadados.
-
-**Atributos principais:**
-- `source_id`: Identificador único da fonte
-- `source_type`: Tipo da fonte de dados
-- `params`: Parâmetros específicos para o conector
-- `metadata`: Metadados do dataset
-
-**Métodos principais:**
-- `from_dict()`, `from_json()`: Métodos para criar instâncias
-- `resolve_column_name()`: Resolve nome real de coluna a partir de alias
-- `get_column_metadata()`: Obtém metadados para uma coluna
-- `get_recommended_aggregations()`: Obtém agregações recomendadas
-- `get_column_type()`, `get_column_format()`: Acessores para tipo e formato
-
-#### `DataConnector` (Interface Abstrata)
-
-Interface base para todos os conectores de dados.
-
-**Métodos abstratos:**
-- `connect()`: Estabelece conexão com a fonte
-- `read_data()`: Lê dados da fonte
-- `close()`: Fecha a conexão
-- `is_connected()`: Verifica se a conexão está ativa
-
-#### `CsvConnector`
-
-Implementação concreta para conexão com arquivos CSV.
-
-**Características:**
-- Suporte para metadados de colunas
-- Conversão automática de tipos
-- Suporte para diretórios com múltiplos arquivos
-- Concatenação automática de arquivos
-- Suporte para consultas SQL via SQLite em memória
-
-**Métodos principais:**
-- `connect()`: Carrega o(s) arquivo(s) CSV
-- `read_data()`: Lê e opcionalmente processa os dados
-- `_apply_metadata_transformations()`: Aplica transformações baseadas em metadados
-- `_convert_column_type()`: Converte uma coluna para o tipo especificado
-- `_execute_query_on_directory()`: Executa consulta SQL em diretório
-
-#### `PostgresConnector`
-
-Implementação para conexão com bancos PostgreSQL.
-
-**Características:**
-- Conexão com PostgreSQL via psycopg2
-- Execução de consultas SQL nativas
-- Verificação de conexão ativa
-
-#### `DuckDBCsvConnector`
-
-Conector avançado que usa DuckDB para processar CSV de forma eficiente.
-
-**Características:**
-- Performance superior para grandes arquivos
-- Suporte para consultas SQL otimizadas
-- Processamento de diretórios com múltiplos arquivos
-- Criação de visões combinadas
-- Adaptação de consulta com base em metadados
-
-**Métodos principais:**
-- `connect()`: Estabelece conexão e registra arquivos como tabelas
-- `read_data()`: Executa consultas SQL via DuckDB
-- `_adapt_query()`: Adapta uma consulta com base em metadados
-- `get_schema()`: Retorna o esquema das tabelas
-- `sample_data()`: Fornece amostra dos dados
-
-#### `DataConnectorFactory`
-
-Factory para criar instâncias de conectores com base na configuração.
-
-**Métodos principais:**
-- `register_connector()`: Registra um novo tipo de conector
-- `create_connector()`: Cria um conector com base na configuração
-- `create_from_json()`: Cria múltiplos conectores a partir de JSON
-
-## Fluxo de Uso Típico
-
-1. **Configuração e inicialização:**
-   ```python
-   # Via dicionário
-   config = {
-       'id': 'vendas_dataset',
-       'type': 'csv',
-       'path': 'dados/vendas.csv',
-       'delimiter': ';'
-   }
-   
-   connector = DataConnectorFactory.create_connector(config)
-   
-   # Ou via JSON
-   json_config = """
-   {
-     "data_sources": [
-       {
-         "id": "vendas_dataset",
-         "type": "csv",
-         "path": "dados/vendas.csv",
-         "delimiter": ";"
-       }
-     ]
-   }
-   """
-   
-   connectors = DataConnectorFactory.create_from_json(json_config)
-   connector = connectors['vendas_dataset']
-   ```
-
-2. **Conexão e leitura:**
-   ```python
-   # Conectar
-   connector.connect()
-   
-   # Leitura simples
-   df = connector.read_data()
-   
-   # Leitura com SQL
-   df = connector.read_data("SELECT produto, SUM(valor) FROM csv GROUP BY produto")
-   
-   # Fechar conexão
-   connector.close()
-   ```
-
-3. **Uso com metadados:**
-   ```python
-   # Definição de metadados
-   column_metadata = [
-       ColumnMetadata(
-           name="data_venda",
-           description="Data da venda",
-           data_type="date",
-           format="%Y-%m-%d",
-           alias=["data", "dt_venda"]
-       ),
-       ColumnMetadata(
-           name="valor",
-           description="Valor da venda",
-           data_type="float",
-           aggregations=["sum", "avg", "max", "min"]
-       )
-   ]
-   
-   metadata = DatasetMetadata(
-       name="vendas_dataset",
-       description="Dataset de vendas",
-       columns={m.name: m for m in column_metadata}
-   )
-   
-   # Configuração com metadados
-   config = DataSourceConfig(
-       source_id="vendas_dataset",
-       source_type="csv",
-       metadata=metadata,
-       path="dados/vendas.csv"
-   )
-   
-   connector = DataConnectorFactory.create_connector(config.to_dict())
-   ```
-
-## Exemplos de Uso
-
-### Exemplo 1: Leitura Básica de CSV
+### Exemplo de Uso
 
 ```python
-from connector.connectors import DataConnectorFactory
-
-config = {
-    'id': 'vendas',
-    'type': 'csv',
-    'path': './dados/vendas.csv',
-    'delimiter': ';'
-}
-
-connector = DataConnectorFactory.create_connector(config)
-connector.connect()
-
-# Leitura simples
-df = connector.read_data()
-print(f"Dados lidos: {len(df)} linhas")
-
-# Leitura com SQL
-df_filtrado = connector.read_data("SELECT * FROM csv WHERE valor > 1000")
-print(f"Dados filtrados: {len(df_filtrado)} linhas")
-
-connector.close()
-```
-
-### Exemplo 2: Uso de DuckDB para CSV Grande
-
-```python
-from connector.connectors import DataConnectorFactory
-
-config = {
-    'id': 'logs',
-    'type': 'duckdb_csv',
-    'path': './logs/',
-    'pattern': '*.csv',
-    'create_combined_view': True
-}
-
-connector = DataConnectorFactory.create_connector(config)
-connector.connect()
-
-# Consulta agregada
-result = connector.read_data("""
-    SELECT 
-        date_trunc('day', timestamp) as dia,
-        COUNT(*) as eventos,
-        COUNT(DISTINCT user_id) as usuarios
-    FROM csv_data_logs
-    GROUP BY 1
-    ORDER BY 1
-""")
-
-print(result.head())
-connector.close()
-```
-
-### Exemplo 3: Metadados e Transformações
-
-```python
-import json
-from connector.connectors import DataConnectorFactory
-from connector.metadata import DatasetMetadata, ColumnMetadata
-
-# Define metadados
-metadata_json = """
-{
-    "name": "vendas_dataset",
-    "description": "Dados de vendas mensais",
-    "columns": [
-        {
-            "name": "data",
-            "description": "Data da venda",
-            "data_type": "date",
-            "format": "%Y-%m-%d",
-            "alias": ["dt_venda", "dia"]
-        },
-        {
-            "name": "produto",
-            "description": "Nome do produto",
-            "data_type": "str",
-            "tags": ["dimensao"]
-        },
-        {
-            "name": "valor",
-            "description": "Valor da venda",
-            "data_type": "float",
-            "aggregations": ["sum", "avg"],
-            "tags": ["metrica"]
-        }
+# Criando um esquema semântico para uma fonte de dados
+schema = SemanticSchema(
+    name="vendas_mensais",
+    description="Dados de vendas mensais por região",
+    source_type="csv",
+    source_path="dados/vendas.csv",
+    columns=[
+        ColumnSchema(
+            name="data",
+            type=ColumnType.DATE,
+            description="Data da venda",
+            nullable=False
+        ),
+        ColumnSchema(
+            name="regiao",
+            type=ColumnType.STRING,
+            description="Região da venda"
+        ),
+        ColumnSchema(
+            name="valor",
+            type=ColumnType.FLOAT,
+            description="Valor da venda"
+        )
+    ],
+    transformations=[
+        TransformationRule(
+            type=TransformationType.CONVERT_TYPE,
+            column="data",
+            params={"type": "date", "format": "%Y-%m-%d"}
+        )
     ]
-}
-"""
+)
 
-# Configuração com metadados
-config = {
-    'id': 'vendas',
-    'type': 'csv',
-    'path': './dados/vendas.csv',
-    'delimiter': ',',
-    'metadata': json.loads(metadata_json)
-}
-
-connector = DataConnectorFactory.create_connector(config)
-connector.connect()
-
-# Os dados já são convertidos automaticamente com base nos metadados
-df = connector.read_data()
-print(f"Tipo da coluna 'data': {df['data'].dtype}")
-print(f"Tipo da coluna 'valor': {df['valor'].dtype}")
-
-# Uso de aliases em consultas
-query = "SELECT dia, SUM(valor) as total FROM csv GROUP BY dia"
-result = connector.read_data(query)
-print(result.head())
-
-connector.close()
+# Salvando o esquema em um arquivo
+schema.save_to_file("schemas/vendas_schema.json")
 ```
 
-### Exemplo 4: Múltiplas Fontes de Dados
+## Metadados (metadata.py)
+
+Este módulo gerencia metadados detalhados sobre conjuntos de dados e suas colunas.
+
+### Classes Principais
+
+- **ColumnMetadata**: Armazena metadados para uma coluna específica
+- **DatasetMetadata**: Armazena metadados para um dataset completo
+- **MetadataRegistry**: Registro global de metadados para múltiplos datasets
+
+### Exemplo de Uso
 
 ```python
-from connector.connectors import DataConnectorFactory
+# Criando metadados para um dataset
+metadados_vendas = DatasetMetadata(
+    name="vendas_mensais",
+    description="Dataset com dados de vendas mensais por região",
+    source="sistema_erp",
+    columns={
+        "data": ColumnMetadata(
+            name="data",
+            description="Data da venda",
+            data_type="date",
+            format="YYYY-MM-DD",
+            alias=["dt_venda", "data_venda"]
+        ),
+        "regiao": ColumnMetadata(
+            name="regiao",
+            description="Região onde a venda foi realizada",
+            data_type="str",
+            alias=["local", "area"]
+        ),
+        "valor": ColumnMetadata(
+            name="valor",
+            description="Valor da venda em reais",
+            data_type="float",
+            display={"precision": 2, "unit": "R$"},
+            aggregations=["sum", "avg", "max", "min"]
+        )
+    },
+    owner="Departamento Comercial"
+)
 
-# Configuração múltipla via JSON
+# Registrando os metadados
+registro = MetadataRegistry()
+registro.register_metadata(metadados_vendas)
+
+# Acessando metadados
+coluna_info = registro.get_metadata("vendas_mensais").get_column_metadata("valor")
+agregacoes = registro.get_metadata("vendas_mensais").get_recommended_aggregations("valor")
+```
+
+## Conectores de Dados (connectors.py)
+
+Este módulo implementa interfaces para diferentes fontes de dados.
+
+### Classes Principais
+
+- **DataSourceConfig**: Configuração de fonte de dados com suporte a metadados
+- **DataConnector**: Interface base para todos os conectores
+- **CsvConnector**: Conector para arquivos CSV
+- **PostgresConnector**: Conector para bancos de dados PostgreSQL
+- **DuckDBCsvConnector**: Conector otimizado para CSV usando DuckDB
+- **DataConnectorFactory**: Fábrica para criação de conectores
+
+### Exemplo de Uso
+
+```python
+# Configuração de fonte de dados
+config = DataSourceConfig(
+    source_id="vendas_csv",
+    source_type="csv",
+    path="dados/vendas.csv",
+    delimiter=";",
+    encoding="utf-8"
+)
+
+# Criação e uso de um conector
+factory = DataConnectorFactory()
+conector = factory.create_connector(config)
+conector.connect()
+
+# Leitura de dados com uma query
+dados = conector.read_data("SELECT regiao, SUM(valor) as total FROM csv GROUP BY regiao")
+conector.close()
+```
+
+### Configuração via JSON
+
+```python
+# Criação de múltiplos conectores via JSON
 json_config = """
 {
-    "metadata": {
-        "files": ["./metadados/vendas_meta.json", "./metadados/estoque_meta.json"],
-        "datasets": []
-    },
     "data_sources": [
         {
-            "id": "vendas",
+            "id": "vendas_csv",
             "type": "csv",
-            "path": "./dados/vendas/",
-            "pattern": "*.csv",
-            "dataset_name": "vendas_dataset"
+            "path": "dados/vendas.csv",
+            "delimiter": ";",
+            "encoding": "utf-8"
         },
         {
-            "id": "estoque",
+            "id": "clientes_db",
             "type": "postgres",
             "host": "localhost",
-            "database": "warehouse",
+            "database": "comercial",
             "username": "usuario",
-            "password": "senha",
-            "dataset_name": "estoque_dataset"
+            "password": "senha"
         }
     ]
 }
 """
 
-connectors = DataConnectorFactory.create_from_json(json_config)
-
-# Uso do conector de vendas
-vendas_conn = connectors['vendas']
-vendas_conn.connect()
-df_vendas = vendas_conn.read_data("SELECT produto, SUM(quantidade) FROM csv GROUP BY produto")
-
-# Uso do conector de estoque
-estoque_conn = connectors['estoque']
-estoque_conn.connect()
-df_estoque = estoque_conn.read_data("SELECT produto, quantidade FROM estoque")
-
-# Análise combinada
-import pandas as pd
-df_combinado = pd.merge(df_vendas, df_estoque, on='produto')
-print(df_combinado.head())
-
-# Fechamento
-for connector in connectors.values():
-    connector.close()
+conectores = DataConnectorFactory.create_from_json(json_config)
+conector_vendas = conectores["vendas_csv"]
+conector_vendas.connect()
 ```
 
-## Extensão do Sistema
+## Carregador de Visualizações (view_loader_and_transformer.py)
 
-### Adicionando Novos Conectores
+Este módulo permite a criação de visualizações personalizadas dos dados.
 
-Para adicionar um novo tipo de conector:
+### Classes Principais
 
-1. Criar uma classe que implementa a interface `DataConnector`
-2. Registrar o conector na factory
+- **ViewLoader**: Carregador de visualizações com suporte à camada semântica e transformações
+
+### Exemplo de Uso
 
 ```python
-class ExcelConnector(DataConnector):
-    def __init__(self, config):
-        self.config = config
-        # ...implementação...
-    
-    def connect(self):
-        # ...implementação...
-    
-    def read_data(self, query=None):
-        # ...implementação...
-    
-    def close(self):
-        # ...implementação...
-    
-    def is_connected(self):
-        # ...implementação...
+# Carregando um esquema semântico
+schema = SemanticSchema.load_from_file("schemas/vendas_schema.json")
 
-# Registro na factory
-DataConnectorFactory.register_connector('excel', ExcelConnector)
+# Criando um carregador de visualizações
+view_loader = ViewLoader(schema)
+
+# Registrando fontes de dados
+view_loader.register_source("vendas", df_vendas)
+view_loader.register_source("clientes", df_clientes)
+
+# Construindo a visualização
+view_df = view_loader.construct_view()
+
+# Função auxiliar
+df_resultado = create_view_from_sources(schema, {
+    "vendas": df_vendas,
+    "clientes": df_clientes
+})
 ```
 
-### Extensão de Metadados
+## Fluxo de Trabalho Típico
 
-O sistema de metadados pode ser estendido para incluir mais atributos:
+1. **Definir Esquemas Semânticos**:
+   - Criar esquemas que descrevam a estrutura, tipos e relações dos dados
+   - Definir transformações necessárias para normalizar e preparar os dados
 
-1. Atualizar as classes `ColumnMetadata` e/ou `DatasetMetadata`
-2. Atualizar os métodos de serialização/desserialização
-3. Implementar lógica para usar os novos atributos
+2. **Preparar Metadados**:
+   - Criar metadados detalhados para cada conjunto de dados
+   - Registrar os metadados no sistema para uso pelos conectores
 
-## Considerações de Performance
+3. **Configurar Conectores**:
+   - Definir as configurações para cada fonte de dados
+   - Criar conectores apropriados para cada fonte
 
-- Para arquivos CSV pequenos, use `CsvConnector`
-- Para arquivos CSV grandes ou consultas complexas, use `DuckDBCsvConnector`
-- Para múltiplos arquivos em um diretório, use `DuckDBCsvConnector` com `create_combined_view=True`
-- Utilize metadados para conversão automática de tipos, o que evita conversões repetidas
+4. **Carregar e Transformar Dados**:
+   - Conectar às fontes de dados
+   - Ler os dados brutos
+   - Aplicar transformações baseadas nos esquemas semânticos
 
-## Logging e Depuração
+5. **Criar Visualizações**:
+   - Utilizar o ViewLoader para construir visualizações personalizadas
+   - Aplicar relações e junções entre diferentes fontes de dados
 
-O sistema utiliza o módulo de logging do Python para registrar informações importantes:
+## Exemplo Completo
+
+```python
+# 1. Definindo o esquema semântico
+from connector.semantic_layer_schema import (
+    SemanticSchema, ColumnSchema, RelationSchema, 
+    TransformationRule, ColumnType, TransformationType
+)
+
+schema = SemanticSchema(
+    name="analise_vendas",
+    description="Análise integrada de vendas e clientes",
+    columns=[
+        ColumnSchema(name="id_venda", type=ColumnType.INTEGER, primary_key=True),
+        ColumnSchema(name="data_venda", type=ColumnType.DATE),
+        ColumnSchema(name="valor", type=ColumnType.FLOAT),
+        ColumnSchema(name="id_cliente", type=ColumnType.INTEGER),
+        ColumnSchema(name="nome_cliente", type=ColumnType.STRING)
+    ],
+    relations=[
+        RelationSchema(
+            source_table="vendas",
+            source_column="id_cliente",
+            target_table="clientes",
+            target_column="id_cliente"
+        )
+    ],
+    transformations=[
+        TransformationRule(
+            type=TransformationType.CONVERT_TYPE,
+            column="data_venda",
+            params={"type": "datetime", "format": "%Y-%m-%d"}
+        ),
+        TransformationRule(
+            type=TransformationType.FILLNA,
+            column="valor",
+            params={"value": 0.0}
+        )
+    ]
+)
+
+# 2. Configurando os conectores
+from connector.connectors import DataSourceConfig, DataConnectorFactory
+
+config_vendas = DataSourceConfig(
+    source_id="vendas",
+    source_type="csv",
+    path="dados/vendas.csv"
+)
+
+config_clientes = DataSourceConfig(
+    source_id="clientes",
+    source_type="csv",
+    path="dados/clientes.csv"
+)
+
+# 3. Carregando os dados
+factory = DataConnectorFactory()
+conector_vendas = factory.create_connector(config_vendas)
+conector_clientes = factory.create_connector(config_clientes)
+
+conector_vendas.connect()
+conector_clientes.connect()
+
+df_vendas = conector_vendas.read_data()
+df_clientes = conector_clientes.read_data()
+
+# 4. Criando a visualização integrada
+from connector.view_loader_and_transformer import create_view_from_sources
+
+df_analise = create_view_from_sources(
+    schema,
+    {
+        "vendas": df_vendas,
+        "clientes": df_clientes
+    }
+)
+
+# 5. Análise dos dados
+print(f"Total de vendas: {df_analise['valor'].sum()}")
+print(f"Venda média por cliente: {df_analise.groupby('nome_cliente')['valor'].mean()}")
+```
+
+## Requisitos de Sistema
+
+- Python 3.7 ou superior
+- pandas
+- duckdb
+- psycopg2 (para conexões PostgreSQL)
+
+## Práticas Recomendadas
+
+1. **Esquemas Semânticos**:
+   - Defina esquemas completos e detalhados para seus dados
+   - Utilize transformações para normalizar os dados na entrada
+
+2. **Metadados**:
+   - Crie metadados descritivos e precisos para todas as colunas
+   - Mantenha os metadados atualizados à medida que os dados evoluem
+
+3. **Conectores**:
+   - Utilize o tipo de conector mais adequado para cada fonte de dados
+   - Para arquivos CSV grandes, prefira o DuckDBCsvConnector
+
+4. **Visualizações**:
+   - Defina relacionamentos claros entre tabelas
+   - Utilize agregações recomendadas nos metadados
+
+## Solução de Problemas
+
+### Problemas Comuns
+
+1. **Erro ao conectar a uma fonte de dados**:
+   - Verifique se o caminho ou credenciais estão corretos
+   - Confirme que o arquivo ou banco de dados existe
+
+2. **Erro ao transformar dados**:
+   - Verifique se os tipos de dados são compatíveis
+   - Certifique-se de que as transformações são aplicáveis aos dados
+
+3. **Erro ao construir visualizações**:
+   - Verifique se todas as tabelas necessárias foram registradas
+   - Confirme que as relações entre tabelas estão corretamente definidas
+
+4. **Resultados inesperados em consultas**:
+   - Utilize o método `sample_data()` para inspecionar os dados brutos
+   - Verifique a estrutura das tabelas com `get_schema()`
+   - Ative o logging para debug detalhado
+
+### Ativando Logging Detalhado
 
 ```python
 import logging
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 ```
 
-Para depuração mais detalhada:
+## Extensão do Sistema
+
+O sistema foi projetado para ser facilmente extensível:
+
+1. **Novos Conectores**: Crie uma nova classe que herde de `DataConnector`
+2. **Novos Tipos de Transformação**: Adicione novos valores à enumeração `TransformationType`
+3. **Novos Tipos de Colunas**: Adicione novos valores à enumeração `ColumnType`
+
+### Exemplo de Extensão: Conector MongoDB
 
 ```python
-logging.getLogger("connector").setLevel(logging.DEBUG)
+class MongoDBConnector(DataConnector):
+    """Conector para MongoDB com suporte à camada semântica."""
+    
+    def __init__(self, config: DataSourceConfig):
+        self.config = config
+        self.client = None
+        self.db = None
+        
+        # Validação de parâmetros obrigatórios
+        required_params = ['uri', 'database', 'collection']
+        missing_params = [p for p in required_params if p not in self.config.params]
+        
+        if missing_params:
+            raise ConfigurationException(
+                f"Parâmetros obrigatórios ausentes: {', '.join(missing_params)}"
+            )
+    
+    def connect(self) -> None:
+        try:
+            from pymongo import MongoClient
+            
+            self.client = MongoClient(self.config.params['uri'])
+            self.db = self.client[self.config.params['database']]
+            
+        except ImportError:
+            raise DataConnectionException("Módulo pymongo não encontrado")
+        except Exception as e:
+            raise DataConnectionException(f"Erro ao conectar ao MongoDB: {str(e)}")
+    
+    def read_data(self, query: Optional[str] = None) -> pd.DataFrame:
+        if not self.is_connected():
+            raise DataConnectionException("Não conectado ao MongoDB")
+            
+        collection = self.db[self.config.params['collection']]
+        
+        if query:
+            # Converte a string de consulta em um dict
+            import json
+            query_dict = json.loads(query)
+            cursor = collection.find(query_dict)
+        else:
+            cursor = collection.find()
+            
+        # Converte o cursor para DataFrame
+        df = pd.DataFrame(list(cursor))
+        
+        # Aplica transformações da camada semântica
+        df = self.apply_semantic_transformations(df)
+        
+        return df
+    
+    # Implementação dos métodos restantes...
+
+# Registrar o novo conector na fábrica
+DataConnectorFactory.register_connector("mongodb", MongoDBConnector)
 ```
 
-## Melhores Práticas
+## Conclusão
 
-1. **Sempre feche os conectores após o uso**:
-   ```python
-   try:
-       connector.connect()
-       # ...operações...
-   finally:
-       connector.close()
-   ```
+Este sistema fornece uma arquitetura flexível e poderosa para conexão, transformação e análise de dados de múltiplas fontes. Ao utilizar esquemas semânticos e metadados, ele permite uma compreensão mais profunda dos dados e facilita a criação de visualizações integradas.
 
-2. **Use with para gerenciamento automático de recursos**:
-   ```python
-   class DataConnectorContext:
-       def __init__(self, connector):
-           self.connector = connector
-       
-       def __enter__(self):
-           self.connector.connect()
-           return self.connector
-       
-       def __exit__(self, exc_type, exc_val, exc_tb):
-           self.connector.close()
-   
-   # Uso
-   with DataConnectorContext(connector) as conn:
-       df = conn.read_data()
-   ```
-
-3. **Defina metadados completos para melhor funcionamento**:
-   - Sempre especifique `data_type`
-   - Para datas, sempre forneça `format`
-   - Use `alias` para facilitar consultas
-
-4. **Considere o uso de Cache para consultas frequentes**:
-   ```python
-   from functools import lru_cache
-   
-   @lru_cache(maxsize=32)
-   def cached_query(connector, query):
-       return connector.read_data(query)
-   ```
-
-## Limitações Conhecidas
-
-1. **Consultas SQL em CSV**: Limitadas à funcionalidade SQLite/DuckDB
-2. **Joins em CsvConnector**: Só possíveis dentro do mesmo arquivo ou com arquivos concatenados
-3. **Concorrência**: Não há suporte nativo para acesso concorrente
-4. **Autenticação**: Senhas em texto plano nas configurações
-
-## Futuras Melhorias
-
-1. **Conectores adicionais**: Suporte para Parquet, Excel, JSON, APIs
-2. **Suporte a credenciais seguras**: Integração com gerenciadores de segredos
-3. **Cache inteligente**: Implementação de cache baseado em tempo e alterações
-4. **Validação de dados**: Validação automática baseada em metadados
-5. **Transformações complexas**: Pipeline de transformações configuráveis
-6. **Inferência automática de metadados**: Detecção de tipos e estruturas
-
-## Referências
-
-- DuckDB: https://duckdb.org/docs/
-- Pandas: https://pandas.pydata.org/docs/
-- PostgreSQL Python: https://www.psycopg.org/docs/
-- Python logging: https://docs.python.org/3/library/logging.html
-- SQLite: https://docs.python.org/3/library/sqlite3.html
+A implementação modular permite fácil extensão para novos tipos de fontes de dados e transformações, tornando o sistema adaptável a diferentes necessidades e casos de uso.
