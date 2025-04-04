@@ -1,40 +1,36 @@
-"""
-Integração de Metadados com o Módulo Principal de Conectores
-===========================================================
-
-Este módulo integra o sistema de metadados com o módulo principal de conectores,
-permitindo que os conectores base reconheçam e utilizem metadados de colunas.
-"""
-
 import os
 import json
 import pandas as pd
 import logging
-from typing import Dict, Any, Optional, Union, List
+from abc import ABC, abstractmethod
+from typing import Any, Dict, Optional, Union
+from typing import Optional, Dict, List, Any
 
-# Importação do módulo principal de conectores
-from connectors import (
-    DataConnector,
-    DataSourceConfig,
-    DataConnectorFactory,
-    DataConnectionException,
-    DataReadException,
-    ConfigurationException,
-    CsvConnector,
-    PostgresConnector
+from connector.metadata import ColumnMetadata, DatasetMetadata, MetadataRegistry
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger("data_connector")
 
-# Importação do módulo de metadados
-from column_metadata import (
-    DatasetMetadata,
-    ColumnMetadata,
-    MetadataRegistry
-)
 
-# Configuração de logging
-logger = logging.getLogger("metadata_integration")
+class DataConnectionException(Exception):
+    """Exceção para problemas de conexão com fontes de dados."""
+    pass
 
-class MetadataEnabledDataSourceConfig(DataSourceConfig):
+
+class DataReadException(Exception):
+    """Exceção para problemas de leitura de dados."""
+    pass
+
+
+class ConfigurationException(Exception):
+    """Exceção para problemas com configurações."""
+    pass
+
+
+class DataSourceConfig:
     """
     Configuração de fonte de dados com suporte a metadados.
     
@@ -58,7 +54,9 @@ class MetadataEnabledDataSourceConfig(DataSourceConfig):
             metadata: Metadados do dataset.
             **params: Parâmetros adicionais para o conector.
         """
-        super().__init__(source_id, source_type, **params)
+        self.source_id = source_id
+        self.source_type = source_type
+        self.params = params
         
         # Processa os metadados
         if metadata is None:
@@ -100,6 +98,23 @@ class MetadataEnabledDataSourceConfig(DataSourceConfig):
         
         return cls(source_id, source_type, metadata=metadata, **params)
     
+    @classmethod
+    def from_json(cls, json_str: str) -> 'DataSourceConfig':
+        """
+        Cria uma instância de configuração a partir de uma string JSON.
+        
+        Args:
+            json_str: String JSON com configurações.
+            
+        Returns:
+            DataSourceConfig: Nova instância de configuração.
+        """
+        try:
+            config_dict = json.loads(json_str)
+            return cls.from_dict(config_dict)
+        except json.JSONDecodeError as e:
+            raise ConfigurationException(f"Erro ao decodificar JSON: {str(e)}")
+        
     def resolve_column_name(self, name_or_alias: str) -> Optional[str]:
         """
         Resolve o nome real de uma coluna a partir de um nome ou alias.
@@ -179,7 +194,59 @@ class MetadataEnabledDataSourceConfig(DataSourceConfig):
         return metadata.format if metadata else None
 
 
-class MetadataEnabledCsvConnector(CsvConnector):
+class DataConnector(ABC):
+    """
+    Interface base para todos os conectores de dados.
+    """
+    
+    @abstractmethod
+    def connect(self) -> None:
+        """
+        Estabelece conexão com a fonte de dados.
+        
+        Raises:
+            DataConnectionException: Se a conexão falhar.
+        """
+        pass
+    
+    @abstractmethod
+    def read_data(self, query: Optional[str] = None) -> pd.DataFrame:
+        """
+        Lê dados da fonte conforme a query especificada.
+        
+        Args:
+            query: Consulta para filtrar/transformar os dados.
+            
+        Returns:
+            pd.DataFrame: DataFrame com os dados lidos.
+            
+        Raises:
+            DataReadException: Se a leitura falhar.
+        """
+        pass
+    
+    @abstractmethod
+    def close(self) -> None:
+        """
+        Fecha a conexão com a fonte de dados.
+        
+        Raises:
+            DataConnectionException: Se o fechamento da conexão falhar.
+        """
+        pass
+    
+    @abstractmethod
+    def is_connected(self) -> bool:
+        """
+        Verifica se a conexão está ativa.
+        
+        Returns:
+            bool: True se conectado, False caso contrário.
+        """
+        pass
+
+
+class CsvConnector(DataConnector):
     """
     Conector CSV com suporte a metadados.
     
@@ -187,37 +254,50 @@ class MetadataEnabledCsvConnector(CsvConnector):
     para melhorar a interpretação e transformação dos dados.
     """
     
-    def __init__(self, config: Union[DataSourceConfig, MetadataEnabledDataSourceConfig]):
+    def __init__(self, config: Union[DataSourceConfig]):
         """
         Inicializa o conector.
         
         Args:
             config: Configuração da fonte de dados.
         """
-        super().__init__(config)
+        self.config = config
+        self.data = None
+        self._connected = False
         
-        # Assegura que self.config seja um MetadataEnabledDataSourceConfig
-        if not isinstance(self.config, MetadataEnabledDataSourceConfig):
-            # Converte para um config com metadados, mas sem metadados reais
-            old_config = self.config
-            self.config = MetadataEnabledDataSourceConfig(
-                old_config.source_id,
-                old_config.source_type,
-                metadata=None,
-                **old_config.params
-            )
+        # Validação de parâmetros obrigatórios
+        if 'path' not in self.config.params:
+            raise ConfigurationException("Parâmetro 'path' é obrigatório para fontes CSV")
+        
     
     def connect(self) -> None:
         """
-        Conecta à fonte de dados CSV e aplica transformações baseadas em metadados.
+        Carrega o arquivo CSV na memória.
         """
-        # Usa a implementação base para conectar
-        super().connect()
+        try:
+            path = self.config.params['path']
+            delimiter = self.config.params.get('delimiter', ',')
+            encoding = self.config.params.get('encoding', 'utf-8')
+            
+            logger.info(f"Conectando ao CSV: {path}")
+            self.data = pd.read_csv(
+                path, 
+                delimiter=delimiter, 
+                encoding=encoding
+            )
+            self._connected = True
+            logger.info(f"Conectado com sucesso ao CSV: {path}")
+        except Exception as e:
+            self._connected = False
+            error_msg = f"Erro ao conectar com CSV {self.config.params.get('path')}: {str(e)}"
+            logger.error(error_msg)
+            raise DataConnectionException(error_msg) from e
         
         # Se conectou com sucesso e tem metadados, aplica transformações
         if self._connected and self.data is not None and hasattr(self.config, 'metadata') and self.config.metadata:
             self._apply_metadata_transformations()
-    
+        
+
     def _apply_metadata_transformations(self) -> None:
         """
         Aplica transformações baseadas em metadados aos dados carregados.
@@ -286,23 +366,51 @@ class MetadataEnabledCsvConnector(CsvConnector):
         except Exception as e:
             logger.warning(f"Erro ao converter coluna {column_name} para {data_type}: {str(e)}")
     
-    def read_data(self, query: Optional[str] = None) -> 'pd.DataFrame':
+    def read_data(self, query: Optional[str] = None) -> pd.DataFrame:
         """
-        Lê dados, opcionalmente aplicando uma consulta SQL.
+        Lê dados do CSV, opcionalmente aplicando uma consulta SQL.
         
         Args:
-            query: Consulta SQL opcional.
+            query: Consulta SQL opcional para filtrar ou transformar os dados.
             
         Returns:
             pd.DataFrame: DataFrame com os dados resultantes.
         """
-        # Se tiver uma query e metadados, adapta a query
-        if query and hasattr(self.config, 'metadata') and self.config.metadata:
-            adapted_query = self._adapt_query_with_metadata(query)
-            return super().read_data(adapted_query)
-        
-        # Caso contrário, usa a implementação padrão
-        return super().read_data(query)
+        if not self._connected:
+            raise DataConnectionException("Não conectado à fonte de dados. Chame connect() primeiro.")
+            
+        try:
+            
+            if not query:
+                return self.data.copy()
+            
+            if query and hasattr(self.config, 'metadata') and self.config.metadata:
+                query = self._adapt_query_with_metadata(query)
+                
+            # Usando pandas para executar SQL na memória
+            import sqlite3
+            from pandas.io.sql import pandasSQL_builder
+            
+            # Criamos uma conexão SQLite em memória
+            conn = sqlite3.connect(':memory:')
+            
+            # Registramos o DataFrame como uma tabela temporária
+            table_name = f"csv_data_{self.config.source_id}"
+            self.data.to_sql(table_name, conn, if_exists='replace', index=False)
+            
+            # Substituímos referências à tabela na query
+            modified_query = query.replace("FROM csv", f"FROM {table_name}")
+            
+            # Executamos a query
+            result = pd.read_sql_query(modified_query, conn)
+            conn.close()
+            
+            return result
+            
+        except Exception as e:
+            error_msg = f"Erro ao ler dados do CSV: {str(e)}"
+            logger.error(error_msg)
+            raise DataReadException(error_msg) from e
     
     def _adapt_query_with_metadata(self, query: str) -> str:
         """
@@ -329,9 +437,140 @@ class MetadataEnabledCsvConnector(CsvConnector):
         
         logger.info(f"Query adaptada com metadados: {adapted_query}")
         return adapted_query
+    
+    def close(self) -> None:
+        """
+        Libera recursos. Para CSV, apenas limpa a referência aos dados.
+        """
+        self.data = None
+        self._connected = False
+        logger.info(f"Conexão CSV fechada: {self.config.params.get('path')}")
+    
+    def is_connected(self) -> bool:
+        """
+        Verifica se o conector está ativo.
+        
+        Returns:
+            bool: True se conectado, False caso contrário.
+        """
+        return self._connected and self.data is not None
 
 
-class MetadataEnabledDuckDBConnector(DataConnector):
+class PostgresConnector(DataConnector):
+    """
+    Conector para bancos de dados PostgreSQL.
+    
+    Attributes:
+        config (DataSourceConfig): Configuração da fonte de dados.
+        connection: Conexão com o banco de dados.
+    """
+    
+    def __init__(self, config: DataSourceConfig):
+        """
+        Inicializa um novo conector PostgreSQL.
+        
+        Args:
+            config: Configuração da fonte de dados.
+        """
+        self.config = config
+        self.connection = None
+        
+        # Validação de parâmetros obrigatórios
+        required_params = ['host', 'database', 'username', 'password']
+        missing_params = [param for param in required_params if param not in self.config.params]
+        
+        if missing_params:
+            raise ConfigurationException(
+                f"Parâmetros obrigatórios ausentes para PostgreSQL: {', '.join(missing_params)}"
+            )
+    
+    def connect(self) -> None:
+        """
+        Estabelece conexão com o banco PostgreSQL.
+        """
+        try:
+            import psycopg2
+            
+            host = self.config.params['host']
+            database = self.config.params['database']
+            username = self.config.params['username']
+            password = self.config.params['password']
+            port = self.config.params.get('port', 5432)
+            
+            logger.info(f"Conectando ao PostgreSQL: {host}/{database}")
+            
+            self.connection = psycopg2.connect(
+                host=host,
+                port=port,
+                database=database,
+                user=username,
+                password=password
+            )
+            
+            logger.info(f"Conectado com sucesso ao PostgreSQL: {host}/{database}")
+            
+        except ImportError:
+            error_msg = "Módulo psycopg2 não encontrado. Instale com: pip install psycopg2-binary"
+            logger.error(error_msg)
+            raise DataConnectionException(error_msg)
+        except Exception as e:
+            error_msg = f"Erro ao conectar com PostgreSQL: {str(e)}"
+            logger.error(error_msg)
+            raise DataConnectionException(error_msg) from e
+    
+    def read_data(self, query: str) -> pd.DataFrame:
+        """
+        Executa uma consulta SQL no banco PostgreSQL.
+        
+        Args:
+            query: Consulta SQL a ser executada.
+            
+        Returns:
+            pd.DataFrame: DataFrame com os resultados da consulta.
+        """
+        if not self.is_connected():
+            raise DataConnectionException("Não conectado ao banco de dados. Chame connect() primeiro.")
+            
+        if not query:
+            raise DataReadException("Query SQL é obrigatória para conectores PostgreSQL")
+            
+        try:
+            return pd.read_sql_query(query, self.connection)
+        except Exception as e:
+            error_msg = f"Erro ao executar query no PostgreSQL: {str(e)}"
+            logger.error(error_msg)
+            raise DataReadException(error_msg) from e
+    
+    def close(self) -> None:
+        """
+        Fecha a conexão com o banco de dados.
+        """
+        if self.connection:
+            self.connection.close()
+            self.connection = None
+            logger.info(f"Conexão PostgreSQL fechada: {self.config.params.get('host')}/{self.config.params.get('database')}")
+    
+    def is_connected(self) -> bool:
+        """
+        Verifica se a conexão está ativa.
+        
+        Returns:
+            bool: True se conectado, False caso contrário.
+        """
+        if not self.connection:
+            return False
+            
+        try:
+            # Verifica se a conexão está ativa com uma consulta simples
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT 1")
+            cursor.close()
+            return True
+        except Exception:
+            return False
+
+
+class DuckDBCsvConnector(DataConnector):
     """
     Conector DuckDB com suporte a metadados.
     
@@ -345,7 +584,7 @@ class MetadataEnabledDuckDBConnector(DataConnector):
         column_mapping: Mapeamento entre aliases e nomes reais de colunas.
     """
     
-    def __init__(self, config: Union[DataSourceConfig, MetadataEnabledDataSourceConfig]):
+    def __init__(self, config: Union[DataSourceConfig]):
         """
         Inicializa o conector.
         
@@ -360,17 +599,6 @@ class MetadataEnabledDuckDBConnector(DataConnector):
         # Validação de parâmetros obrigatórios
         if 'path' not in self.config.params:
             raise ConfigurationException("Parâmetro 'path' é obrigatório para fontes CSV")
-        
-        # Assegura que self.config seja um MetadataEnabledDataSourceConfig
-        if not isinstance(self.config, MetadataEnabledDataSourceConfig):
-            # Converte para um config com metadados, mas sem metadados reais
-            old_config = self.config
-            self.config = MetadataEnabledDataSourceConfig(
-                old_config.source_id,
-                old_config.source_type,
-                metadata=None,
-                **old_config.params
-            )
     
     def connect(self) -> None:
         """
@@ -761,16 +989,36 @@ class MetadataEnabledDuckDBConnector(DataConnector):
             raise DataReadException(error_msg) from e
 
 
-class MetadataEnabledDataConnectorFactory(DataConnectorFactory):
+class DataConnectorFactory:
     """
     Factory de conectores com suporte a metadados.
     
     Estende a factory padrão para criar conectores que reconhecem e
     utilizam metadados de colunas.
     """
+    _connectors = {
+        'csv': CsvConnector,
+        'postgres': PostgresConnector,
+        'duckdb_csv': DuckDBCsvConnector
+    }
     
     @classmethod
-    def create_connector(cls, config: Union[Dict, DataSourceConfig, MetadataEnabledDataSourceConfig]) -> DataConnector:
+    def register_connector(cls, source_type: str, connector_class) -> None:
+        """
+        Registra um novo tipo de conector na factory.
+        
+        Args:
+            source_type: Nome do tipo de fonte de dados.
+            connector_class: Classe do conector a ser registrada.
+        """
+        if not issubclass(connector_class, DataConnector):
+            raise TypeError(f"A classe deve implementar a interface DataConnector")
+            
+        cls._connectors[source_type] = connector_class
+        logger.info(f"Conector registrado para tipo: {source_type}")
+    
+    @classmethod
+    def create_connector(cls, config: Union[Dict, DataSourceConfig]) -> DataConnector:
         """
         Cria um conector com suporte a metadados.
         
@@ -781,16 +1029,7 @@ class MetadataEnabledDataConnectorFactory(DataConnectorFactory):
             DataConnector: Conector criado.
         """
         # Converte o config para MetadataEnabledDataSourceConfig se necessário
-        if isinstance(config, dict):
-            config = MetadataEnabledDataSourceConfig.from_dict(config)
-        elif isinstance(config, DataSourceConfig) and not isinstance(config, MetadataEnabledDataSourceConfig):
-            # Cria uma versão com metadados mantendo os parâmetros originais
-            config = MetadataEnabledDataSourceConfig(
-                config.source_id,
-                config.source_type,
-                metadata=None,
-                **config.params
-            )
+        config = DataSourceConfig.from_dict(config)
         
         # Cria o conector apropriado com base no tipo
         source_type = config.source_type
@@ -802,7 +1041,7 @@ class MetadataEnabledDataConnectorFactory(DataConnectorFactory):
         
         # Se o conector é o CSV, cria uma versão com metadados
         if source_type == 'csv' and connector_class == CsvConnector:
-            return MetadataEnabledCsvConnector(config)
+            return CsvConnector(config)
         
         # Para outros conectores, usa a classe original
         return connector_class(config)

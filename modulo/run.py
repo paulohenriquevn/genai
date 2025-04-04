@@ -13,29 +13,21 @@ from typing import Dict, List, Any, Optional
 import logging
 import matplotlib.pyplot as plt
 
-# Importa o módulo de conectores padrão
-from connectors import (
-    DataConnector, 
+from connector.connectors import (
+    DataConnector,
+    DataConnectorFactory, 
     DataSourceConfig,
     DataConnectionException, 
     DataReadException,
     DuckDBCsvConnector
 )
 
-# Importa o módulo de metadados e conectores com suporte a metadados
-from metadata_connectors import (
-    MetadataEnabledDataConnectorFactory,
-    MetadataEnabledDataSourceConfig,
-    MetadataRegistry
-)
-
-# Importa o módulo de metadados
-from column_metadata import (
+from connector.metadata import (
+    MetadataRegistry,
     DatasetMetadata,
     ColumnMetadata
 )
 
-# Configuração de logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -119,14 +111,14 @@ class DataAnalyzer:
                     logger.error(f"Erro ao modificar configuração com metadados: {str(e)}")
             
             # Utiliza a factory com suporte a metadados
-            self.connectors = MetadataEnabledDataConnectorFactory.create_from_json(config_json)
+            self.connectors = DataConnectorFactory.create_from_json(config_json)
             logger.info(f"Carregados {len(self.connectors)} conectores com suporte a metadados")
             
         except Exception as e:
             logger.error(f"Erro ao carregar conectores: {str(e)}")
             # Cria um conector padrão para não quebrar o fluxo
-            config = MetadataEnabledDataSourceConfig("default", "csv", path="dados.csv")
-            self.connectors = {"default": MetadataEnabledDataConnectorFactory.create_connector(config)}
+            config = DataSourceConfig("default", "csv", path="dados.csv")
+            self.connectors = {"default": DataConnectorFactory.create_connector(config)}
     
     def get_available_sources(self) -> List[str]:
         """
