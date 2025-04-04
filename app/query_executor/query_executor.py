@@ -4,6 +4,7 @@ Módulo de Execução de Consultas e Geração de Visualizações
 
 import logging
 import pandas as pd
+import re
 from typing import Any, Dict, Optional
 from datetime import datetime
 import os
@@ -132,28 +133,68 @@ class QueryCache:
 class QueryExecutor:
     """Executa consultas em fontes de dados"""
     
-    def __init__(self, data_connector, cache: Optional[QueryCache] = None):
+    def __init__(self, data_connector, cache: Optional[QueryCache] = None, data_connectors=None):
         """
         Inicializa o executor de consultas
         
         Args:
-            data_connector: Conector de dados
+            data_connector: Conector de dados padrão
             cache: Sistema de cache opcional
+            data_connectors: Dicionário de conectores de dados por tipo
         """
-        self.data_connector = data_connector
+        self.data_connector = data_connector  # Conector padrão
+        self.data_connectors = data_connectors or {}  # Todos os conectores
         self.cache = cache
     
-    def execute(self, query: str, 
-                params: Optional[Dict[str, Any]] = None, 
-                use_cache: bool = True) -> QueryResult:
+    def add_connector(self, name: str, connector):
+        """Adiciona um novo conector de dados"""
+        self.data_connectors[name] = connector
+        
+    def select_connector(self, query: str):
         """
-        Executa uma consulta SQL
+        Seleciona o conector de dados apropriado baseado na consulta
         
         Args:
-            query: Consulta SQL a ser executada
+            query: Consulta a ser executada
+            
+        Returns:
+            Conector de dados apropriado
+        """
+        query = query.strip().lower()
+        
+        # Verificar se parece ser uma consulta para CSV (contém .csv)
+        if '.csv' in query and 'csv' in self.data_connectors:
+            # Modificar a consulta para evitar JOINs em CSV se necessário
+            if " join " in query:
+                logger.warning("Consulta CSV contém JOINs, que não são suportados corretamente. Simplificando consulta...")
+                # Extrair apenas a primeira tabela que parece ser um arquivo CSV
+                csv_table_match = re.search(r'from\s+([^\s]+\.csv)', query)
+                if csv_table_match:
+                    csv_table = csv_table_match.group(1)
+                    logger.info(f"Arquivo CSV identificado: {csv_table}")
+            
+            return self.data_connectors['csv']
+        
+        # Se a consulta começar com "csv:" usando o conector CSV explicitamente
+        if query.startswith('csv:') and 'csv' in self.data_connectors:
+            return self.data_connectors['csv']
+            
+        # Para outros casos, usar o conector padrão
+        return self.data_connector
+        
+    def execute(self, query: str, 
+                params: Optional[Dict[str, Any]] = None, 
+                use_cache: bool = True,
+                connector_name: Optional[str] = None) -> QueryResult:
+        """
+        Executa uma consulta
+        
+        Args:
+            query: Consulta a ser executada
             params: Parâmetros para a consulta
             use_cache: Se deve usar o cache
-        
+            connector_name: Nome do conector a usar (opcional)
+            
         Returns:
             Resultado da consulta
         """
@@ -161,10 +202,98 @@ class QueryExecutor:
         
         start_time = time.time()
         
+        # Remover qualquer prefixo de conector (ex: "csv:", "sqlite:")
+        original_query = query
+        connector_prefix = None
+        
+        if ':' in query and ' ' not in query.split(':')[0]:
+            parts = query.split(':', 1)
+            if len(parts) > 1:
+                connector_prefix = parts[0].lower()
+                query = parts[1].strip()
+        
+        # Usar o conector especificado ou selecionar o apropriado
+        if connector_name and connector_name in self.data_connectors:
+            selected_connector = self.data_connectors[connector_name]
+        elif connector_prefix and connector_prefix in self.data_connectors:
+            selected_connector = self.data_connectors[connector_prefix]
+        else:
+            # Selecionar automaticamente baseado na consulta
+            selected_connector = self.select_connector(original_query)
+            
+        # Se é um conector CSV, simplificar a consulta se necessário
+        if selected_connector is self.data_connectors.get('csv') and " JOIN " in query.upper():
+            logger.warning("Detectada consulta CSV com JOINs. Simplificando para consulta plana...")
+            # Extrair a tabela CSV principal
+            csv_table_match = re.search(r'FROM\s+([^\s,]+\.csv)', query, re.IGNORECASE)
+            if csv_table_match:
+                csv_table = csv_table_match.group(1)
+                
+                # Simplificar a consulta para usar apenas colunas diretas
+                simplified_query = query
+                
+                # Remover aliases de tabela em referências a colunas
+                for alias in ['p.', 'oi.', 'o.', 'c.']:
+                    simplified_query = simplified_query.replace(alias, '')
+                
+                # Remover cláusulas JOIN completamente
+                simplified_query = re.sub(r'JOIN\s+[^\s]+\s+[a-z]+\s+ON\s+[^WHERE|GROUP|ORDER|LIMIT|;]+', '', 
+                                          simplified_query, flags=re.IGNORECASE)
+                
+                # Tentar outro padrão se o primeiro falhar
+                if " JOIN " in simplified_query.upper():
+                    simplified_query = re.sub(r'JOIN.+?(?=(WHERE|GROUP BY|ORDER BY|LIMIT|$))', '', 
+                                             simplified_query, flags=re.IGNORECASE | re.DOTALL)
+                
+                # Remover alias de tabela da cláusula FROM
+                simplified_query = re.sub(r'FROM\s+([^\s]+\.csv)\s+[a-z][a-z]?', 
+                                         f'FROM {csv_table}', simplified_query, flags=re.IGNORECASE)
+                
+                # Simplificar ainda mais, focando apenas nas colunas e na tabela CSV
+                select_match = re.search(r'SELECT\s+(.+?)\s+FROM', simplified_query, re.IGNORECASE | re.DOTALL)
+                if select_match:
+                    select_cols = select_match.group(1).strip()
+                    # Remover prefixos de tabela das colunas selecionadas
+                    for prefix in ['p.', 'oi.', 'o.', 'c.']:
+                        select_cols = select_cols.replace(prefix, '')
+                    
+                    # Reconstruir a consulta simplificada
+                    simplified_query = f"SELECT {select_cols} FROM {csv_table}"
+                    
+                    # Adicionar GROUP BY se existir na consulta original
+                    group_match = re.search(r'GROUP BY\s+(.+?)(?:\s+ORDER BY|\s+LIMIT|$)', query, re.IGNORECASE | re.DOTALL)
+                    if group_match:
+                        group_cols = group_match.group(1).strip()
+                        # Remover prefixos de tabela
+                        for prefix in ['p.', 'oi.', 'o.', 'c.']:
+                            group_cols = group_cols.replace(prefix, '')
+                        simplified_query += f" GROUP BY {group_cols}"
+                    
+                    # Adicionar ORDER BY se existir
+                    order_match = re.search(r'ORDER BY\s+(.+?)(?:\s+LIMIT|$)', query, re.IGNORECASE | re.DOTALL)
+                    if order_match:
+                        order_cols = order_match.group(1).strip()
+                        # Remover prefixos de tabela
+                        for prefix in ['p.', 'oi.', 'o.', 'c.']:
+                            order_cols = order_cols.replace(prefix, '')
+                        simplified_query += f" ORDER BY {order_cols}"
+                    
+                    # Adicionar LIMIT se existir
+                    limit_match = re.search(r'LIMIT\s+(\d+)', query, re.IGNORECASE)
+                    if limit_match:
+                        limit = limit_match.group(1)
+                        simplified_query += f" LIMIT {limit}"
+                
+                logger.info(f"Consulta simplificada: {simplified_query}")
+                query = simplified_query
+        
+        # Chave de cache composta pelo conector + query
+        cache_key = f"{id(selected_connector)}:{original_query}"
+        
         # Verificar cache se habilitado
         if use_cache and self.cache:
-            cached_result = self.cache.get(query)
-            if cached_result:
+            cached_result = self.cache.get(cache_key)
+            if cached_result is not None:
                 return QueryResult(
                     data=cached_result, 
                     execution_time=time.time() - start_time, 
@@ -173,7 +302,7 @@ class QueryExecutor:
         
         # Executar consulta
         try:
-            result_df = self.data_connector.execute_query(query, params)
+            result_df = selected_connector.execute_query(query, params)
             
             # Calcular tempo de execução
             execution_time = time.time() - start_time
@@ -186,7 +315,7 @@ class QueryExecutor:
             
             # Armazenar em cache se habilitado
             if use_cache and self.cache:
-                self.cache.set(query, result_df)
+                self.cache.set(cache_key, result_df)
             
             return query_result
         

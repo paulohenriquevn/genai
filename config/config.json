@@ -14,6 +14,11 @@
       "model": "gpt-4o"
     }
   },
+  "csv": {
+    "enabled": true,
+    "directory": "uploads/csv",
+    "max_file_size_mb": 10
+  },
   "cache": {
     "enabled": true,
     "ttl": 3600,
@@ -26,17 +31,17 @@
         "description": "Resumo de vendas por categoria",
         "columns": [
           {
-            "name": "categoria",
+            "name": "category",
             "type": "string",
             "semanticType": "category"
           },
           {
-            "name": "receita_total",
+            "name": "total_amount",
             "type": "number",
             "semanticType": "amount"
           },
           {
-            "name": "quantidade_vendida",
+            "name": "quantity",
             "type": "number",
             "semanticType": "count"
           }

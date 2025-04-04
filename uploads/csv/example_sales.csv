@@ -1,0 +1,16 @@
+date,product,category,quantity,unit_price,total_amount
+2023-01-15,Smartphone A,Electronics,5,799.99,3999.95
+2023-01-20,Laptop Pro,Electronics,2,1299.99,2599.98
+2023-01-25,Bluetooth Speaker,Electronics,8,49.99,399.92
+2023-02-05,Coffee Maker,Home Appliances,3,129.99,389.97
+2023-02-10,Blender,Home Appliances,4,79.99,319.96
+2023-02-15,Toaster,Home Appliances,6,39.99,239.94
+2023-03-01,Running Shoes,Sports,10,89.99,899.90
+2023-03-05,Yoga Mat,Sports,15,29.99,449.85
+2023-03-10,Dumbbells Set,Sports,5,149.99,749.95
+2023-03-20,Tennis Racket,Sports,3,199.99,599.97
+2023-04-01,Desk Chair,Furniture,4,159.99,639.96
+2023-04-05,Office Desk,Furniture,2,249.99,499.98
+2023-04-10,Bookshelf,Furniture,3,129.99,389.97
+2023-04-15,TV Stand,Furniture,1,179.99,179.99
+2023-04-20,Sofa,Furniture,1,899.99,899.99

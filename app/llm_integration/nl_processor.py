@@ -36,6 +36,9 @@ class NLtoSQLProcessor:
             7. Limite resultados para grandes conjuntos de dados
             8. Seja conciso e direto
             9. Retorne apenas a consulta SQL sem comentários ou explicações
+            10. Use EXATAMENTE os nomes das colunas fornecidos no schema, respeitando maiúsculas e minúsculas
+            11. Para arquivos CSV, respeite os nomes exatos das colunas do arquivo
+            12. NÃO traduza ou altere os nomes de colunas - use-os exatamente como aparecem no schema
             """,
             
             "schema_template": """
@@ -43,8 +46,14 @@ class NLtoSQLProcessor:
             {schema_description}
             
             INSTRUÇÕES:
-            - Use apenas as tabelas e colunas descritas
-            - Se a pergunta exigir dados não disponíveis, adapte ou explique a limitação
+            - Use apenas as tabelas e colunas descritas EXATAMENTE como estão nomeadas acima
+            - NÃO traduza nomes de colunas de inglês para português ou vice-versa
+            - Se a coluna é chamada "category", use "category" e não "categoria"
+            - Se a coluna é chamada "product", use "product" e não "produto"
+            - NÃO adicione joins ou tabelas que não estão explicitamente listadas no schema
+            - Para arquivos CSV, use o nome exato do arquivo no FROM (ex: "FROM example_sales.csv")
+            - Se a pergunta exigir dados não disponíveis, adapte a consulta para usar apenas colunas disponíveis
+            - Use SQL simples e compatível com SQLite para consultas em CSV
             """,
             
             "sql_generation": """

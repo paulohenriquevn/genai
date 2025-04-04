@@ -1,0 +1,67 @@
+{
+    "name": "vendas_perdidas",
+    "description": "Dados de oportunidades de vendas perdidas",
+    "columns": [
+        {
+            "name": "OportunidadeID",
+            "description": "Identificador único da oportunidade",
+            "data_type": "string",
+            "alias": [
+                "id",
+                "codigo",
+                "oportunidade"
+            ]
+        },
+        {
+            "name": "Motivo",
+            "description": "Motivo da perda da oportunidade",
+            "data_type": "string",
+            "alias": [
+                "razao",
+                "justificativa"
+            ]
+        },
+        {
+            "name": "EstagioPerda",
+            "description": "Estágio do funil em que a oportunidade foi perdida",
+            "data_type": "string",
+            "alias": [
+                "estagio",
+                "fase",
+                "etapa"
+            ]
+        },
+        {
+            "name": "ImpactoFinanceiro",
+            "description": "Valor da oportunidade perdida em R$",
+            "data_type": "float",
+            "format": "currency",
+            "alias": [
+                "valor",
+                "montante",
+                "receita",
+                "revenue"
+            ],
+            "aggregations": [
+                "sum",
+                "avg",
+                "min",
+                "max"
+            ],
+            "display": {
+                "precision": 2,
+                "unit": "R$"
+            }
+        },
+        {
+            "name": "FeedbackCliente",
+            "description": "Feedback do cliente sobre a perda",
+            "data_type": "string",
+            "alias": [
+                "feedback",
+                "comentario",
+                "observacao"
+            ]
+        }
+    ]
+}
