@@ -100,225 +100,251 @@ from utils.dataset_analyzer import DatasetAnalyzer
 
 class NaturalLanguageQueryEngine:
     """
-    Motor principal para processamento de consultas em linguagem natural sobre dados estruturados.
-
-    Esta classe integra todos os componentes do sistema para fornecer uma interface unificada:
-    - Carregamento e gerenciamento de dados usando conectores
-    - Processamento de consultas em linguagem natural
-    - Geração de código Python/SQL
-    - Execução segura de código
-    - Formatação de respostas
-    - Tratamento de erros
+    Motor de processamento de consultas em linguagem natural.
+    
+    Esta classe coordena o processo completo de:
+    1. Carregar e preparar os dados
+    2. Receber consultas em linguagem natural
+    3. Gerar código Python/SQL para executar a consulta
+    4. Executar o código de forma segura
+    5. Processar e formatar os resultados
+    6. Lidar com erros e tentar recuperação automática
     """
     
     def __init__(
-        self, 
+        self,
         data_config_path: Optional[str] = None,
         metadata_config_path: Optional[str] = None,
+        base_data_path: Optional[str] = None,
         output_types: Optional[List[str]] = None,
-        model_config: Optional[Dict[str, Any]] = None,
-        base_data_path: Optional[str] = None
+        llm_config_path: Optional[str] = None
     ):
         """
         Inicializa o motor de consulta em linguagem natural.
         
         Args:
-            data_config_path: Caminho para o arquivo de configuração de dados
-            metadata_config_path: Caminho para o arquivo de configuração de metadados
-            output_types: Tipos de saída permitidos (string, number, dataframe, plot)
-            model_config: Configuração para o modelo de IA
-            base_data_path: Caminho base para os arquivos de dados
+            data_config_path: Caminho para arquivo de configuração de fontes de dados
+            metadata_config_path: Caminho para arquivo de metadados
+            base_data_path: Diretório base onde os arquivos de dados estão localizados
+            output_types: Lista de tipos de saída suportados (string, number, dataframe, plot)
+            llm_config_path: Caminho para arquivo de configuração do LLM
         """
-        # Configurações básicas
-        self.data_config_path = data_config_path or os.path.join(os.getcwd(), "datasources.json")
-        self.metadata_config_path = metadata_config_path or os.path.join(os.getcwd(), "metadata.json")
-        self.base_data_path = base_data_path or os.path.join(os.getcwd(), "dados")
-        self.output_types = output_types or ["string", "number", "dataframe", "plot"]
-        self.model_config = model_config or {}
+        # Diretórios base
+        self.base_data_path = base_data_path or os.getcwd()
         
-        # Diretório de saída para gráficos e resultados
-        self.output_dir = os.path.join(os.getcwd(), "output")
-        os.makedirs(self.output_dir, exist_ok=True)
-        
-        # Inicialização de componentes
-        self._init_components()
-        
-        # Carregamento de dados e metadados
-        self._load_data_connectors()
-        
-        # Inicialização do executor de código
-        self.code_executor = AdvancedDynamicCodeExecutor(
-            allowed_imports=[
-                'numpy', 'pandas', 'matplotlib', 'scipy', 'sympy', 
-                'statistics', 're', 'math', 'random', 'datetime', 
-                'json', 'itertools', 'collections', 'io', 'base64'
-            ],
-            timeout=60,
-            max_output_size=10 * 1024 * 1024  # 10 MB
-        )
-        
-        # Inicialização do parser de resposta
-        self.response_parser = ResponseParser()
-        
-        # Estatísticas de uso
-        self.query_count = 0
-        self.successful_queries = 0
-        self.error_queries = 0
-        
-        logger.info("Motor de consulta em linguagem natural inicializado")
-    
-    def _init_components(self):
-        """Inicializa os componentes internos"""
-        # Registro de metadados
-        self.metadata_registry = MetadataRegistry()
-        
-        # Conectores de dados
-        self.connectors: Dict[str, DataConnector] = {}
-        
-        # Fachada para construtores de consultas
-        self.query_builder = QueryBuilderFacade(base_path=self.base_data_path)
-        
-        # Analisador de datasets
-        self.dataset_analyzer = DatasetAnalyzer()
-        
-        # Mapeamento de dataframes carregados
-        self.dataframes: Dict[str, DataFrameWrapper] = {}
-        
-        # Estado do agente
-        self.memory = AgentMemory("Assistente de análise de dados com SQL")
-        self.config = AgentConfig(direct_sql=True)
-        self.agent_state = AgentState(
-            dfs=[],
-            memory=self.memory,
-            config=self.config
-        )
-    
-    def _load_data_connectors(self):
-        """Carrega conectores de dados a partir dos arquivos de configuração"""
-        try:
-            # Verifica se os arquivos de configuração existem
-            if not os.path.exists(self.data_config_path):
-                logger.warning(f"Arquivo de configuração de dados não encontrado: {self.data_config_path}")
-                # Cria um arquivo de configuração padrão
-                self._create_default_data_config()
-            
-            # Carrega metadados se disponíveis
-            if os.path.exists(self.metadata_config_path):
-                try:
-                    self.metadata_registry.register_from_file(self.metadata_config_path)
-                    logger.info(f"Metadados carregados do arquivo: {self.metadata_config_path}")
-                except Exception as e:
-                    logger.error(f"Erro ao carregar metadados: {str(e)}")
-            
-            # Carrega os conectores de dados
-            with open(self.data_config_path, "r") as f:
-                config_json = f.read()
-            
-            # Utiliza a factory para criar os conectores
-            self.connectors = DataConnectorFactory.create_from_json(config_json)
-            logger.info(f"Carregados {len(self.connectors)} conectores de dados")
-            
-            # Carrega os dataframes
-            self._load_dataframes()
-            
-        except Exception as e:
-            logger.error(f"Erro ao carregar conectores de dados: {str(e)}")
-            # Cria um conector padrão para não quebrar o fluxo
-            self._create_default_connector()
-    
-    def _create_default_data_config(self):
-        """Cria um arquivo de configuração de dados padrão"""
-        default_config = {
-            "data_sources": [
-                {
-                    "id": "vendas",
-                    "type": "csv",
-                    "path": os.path.join(self.base_data_path, "vendas.csv"),
-                    "delimiter": ",",
-                    "encoding": "utf-8"
-                },
-                {
-                    "id": "clientes",
-                    "type": "csv",
-                    "path": os.path.join(self.base_data_path, "clientes.csv"),
-                    "delimiter": ",",
-                    "encoding": "utf-8"
-                },
-                {
-                    "id": "vendas_perdidas",
-                    "type": "csv",
-                    "path": os.path.join(self.base_data_path, "vendas_perdidas.csv"),
-                    "delimiter": ",",
-                    "encoding": "utf-8"
-                }
-            ]
-        }
-        
-        with open(self.data_config_path, "w") as f:
-            json.dump(default_config, f, indent=2)
-        
-        logger.info(f"Criado arquivo de configuração padrão: {self.data_config_path}")
-    
-    def _create_default_connector(self):
-        """Cria um conector padrão para garantir operação mínima"""
-        config = DataSourceConfig(
-            source_id="vendas",
-            source_type="csv",
-            path=os.path.join(self.base_data_path, "vendas.csv")
-        )
-        self.connectors = {"vendas": DataConnectorFactory.create_connector(config)}
-        logger.info("Criado conector padrão para garantir operação mínima")
-    
-    def _load_dataframes(self):
-        """Carrega os dataframes a partir dos conectores"""
+        # DataFrames carregados
         self.dataframes = {}
         
-        for source_id, connector in self.connectors.items():
-            try:
-                # Conecta ao conector
-                connector.connect()
-                
-                # Lê os dados
-                df = connector.read_data()
-                
-                # Cria um wrapper para o dataframe
-                wrapper = DataFrameWrapper(df, source_id)
-                
-                # Adiciona ao dicionário de dataframes
-                self.dataframes[source_id] = wrapper
-                
-                # Fecha a conexão
-                connector.close()
-                
-                logger.info(f"Dataframe '{source_id}' carregado com {len(df)} registros")
-                
-            except Exception as e:
-                logger.error(f"Erro ao carregar dataframe '{source_id}': {str(e)}")
+        # Conectores de dados
+        self.connectors = {}
+        
+        # Estado do agente
+        self.agent_state = AgentState(
+            dfs=[],
+            output_type=None,
+            memory=AgentMemory(
+                agent_description="Motor de consulta em linguagem natural"
+            ),
+            config=AgentConfig(
+                direct_sql=False
+            )
+        )
+        
+        # Executor de código
+        self.code_executor = AdvancedDynamicCodeExecutor()
+        
+        # Parser de respostas
+        self.response_parser = ResponseParser()
+        
+        # Metadados
+        self.metadata_registry = MetadataRegistry()
+        if metadata_config_path and os.path.exists(metadata_config_path):
+            self._load_metadata(metadata_config_path)
+            
+        # Tipos de saída suportados
+        self.output_types = output_types or ["string", "number", "dataframe", "plot"]
+        
+        # Carrega dados iniciais
+        if data_config_path and os.path.exists(data_config_path):
+            self._load_data_from_config(data_config_path)
+            
+        # Inicializa o sistema
+        logger.info("Motor de consulta em linguagem natural inicializado")
     
-    def update_agent_state(self, query: str):
+    def _load_metadata(self, metadata_path: str):
         """
-        Atualiza o estado do agente com base na consulta.
+        Carrega metadados de um arquivo JSON.
         
         Args:
-            query: Consulta em linguagem natural
+            metadata_path: Caminho para o arquivo de metadados
         """
-        # Atualiza a memória do agente
-        self.memory.add_message(query)
+        try:
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                metadata_config = json.load(f)
+            
+            # Registra metadados
+            if "datasets" in metadata_config:
+                for dataset_meta in metadata_config["datasets"]:
+                    # Certifica-se de que o metadado tem os campos necessários
+                    if "name" not in dataset_meta:
+                        raise ValueError("O metadado do dataset deve conter o campo 'name'")
+                    
+                    # Cria e registra o metadado
+                    name = dataset_meta["name"]
+                    description = dataset_meta.get("description", f"Dataset {name}")
+                    source = dataset_meta.get("source", "unknown")
+                    
+                    # Processa os metadados de colunas
+                    columns = {}
+                    if "columns" in dataset_meta:
+                        for col_meta in dataset_meta["columns"]:
+                            col_name = col_meta.get("name")
+                            if col_name:
+                                columns[col_name] = ColumnMetadata(
+                                    name=col_name,
+                                    description=col_meta.get("description", col_name),
+                                    type=col_meta.get("type", "string"),
+                                    is_categorical=col_meta.get("is_categorical", False),
+                                    is_temporal=col_meta.get("is_temporal", False),
+                                    is_numeric=col_meta.get("is_numeric", False),
+                                    format=col_meta.get("format", None),
+                                    constraints=col_meta.get("constraints", None)
+                                )
+                    
+                    # Registra o metadado do dataset
+                    self.metadata_registry.register_dataset(
+                        DatasetMetadata(
+                            name=name,
+                            description=description,
+                            source=source,
+                            columns=columns,
+                            relationships=dataset_meta.get("relationships", [])
+                        )
+                    )
+            
+            logger.info(f"Metadados carregados do arquivo: {metadata_path}")
+        except Exception as e:
+            logger.error(f"Erro ao carregar metadados: {str(e)}")
+            raise
+    
+    def _load_data_from_config(self, config_path: str):
+        """
+        Carrega dados a partir de um arquivo de configuração.
         
-        # Define os dataframes disponíveis
+        Args:
+            config_path: Caminho para o arquivo de configuração
+        """
+        try:
+            # Carrega a configuração
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            
+            # Verifica se a configuração tem a estrutura esperada
+            if "data_sources" not in config:
+                raise ValueError("Formato de configuração inválido: 'data_sources' não encontrado")
+            
+            # Processa cada fonte de dados
+            for source_config in config["data_sources"]:
+                # Verifica campos obrigatórios
+                if "id" not in source_config or "type" not in source_config:
+                    continue
+                
+                source_id = source_config["id"]
+                source_type = source_config["type"]
+                path = source_config.get("path", None)
+                
+                # Ajusta o caminho para usar o diretório base, se necessário
+                if path and not os.path.isabs(path):
+                    path = os.path.join(self.base_data_path, path)
+                    source_config["path"] = path
+                
+                # Cria a configuração
+                connector_config = DataSourceConfig(
+                    source_id=source_id,
+                    source_type=source_type,
+                    **{k: v for k, v in source_config.items() if k not in ["id", "type"]}
+                )
+                
+                # Cria e inicializa o conector
+                try:
+                    connector = DataConnectorFactory.create_connector(connector_config)
+                    connector.connect()
+                    
+                    # Aplica metadados, se disponíveis
+                    if source_id in self.metadata_registry.datasets:
+                        connector.apply_metadata(self.metadata_registry.datasets[source_id])
+                    
+                    # Armazena o conector
+                    self.connectors[source_id] = connector
+                    
+                    # Carrega o DataFrame, se possível
+                    df = connector.read_data()
+                    wrapper = DataFrameWrapper(
+                        dataframe=df,
+                        name=source_id,
+                        description=f"DataFrame carregado de {source_id}",
+                        source=source_type
+                    )
+                    self.dataframes[source_id] = wrapper
+                    logger.info(f"Dataframe '{source_id}' carregado com {len(df)} registros")
+                except Exception as e:
+                    logger.error(f"Erro ao inicializar conector {source_id}: {str(e)}")
+                    continue
+            
+            # Inicializa o conector SQL combinado, se tivermos DataFrames
+            if self.dataframes:
+                # Adiciona os DataFrames ao estado do agente
+                self.agent_state.dfs = list(self.dataframes.values())
+                
+                try:
+                    # Inicializa um conector SQL para todos os DataFrames
+                    sql_config = DataSourceConfig(
+                        source_id="sql_connector",
+                        source_type="duckdb_csv",
+                        path=self.base_data_path,
+                        pattern="*.csv"
+                    )
+                    sql_connector = DuckDBCsvConnector(sql_config)
+                    sql_connector.connect()
+                    self.connectors["sql_connector"] = sql_connector
+                except Exception as e:
+                    logger.error(f"Erro ao inicializar conector SQL: {str(e)}")
+            
+            logger.info(f"Carregados {len(self.connectors)} conectores de dados")
+            
+        except Exception as e:
+            logger.error(f"Erro ao carregar configuração de dados: {str(e)}")
+            raise
+    
+    def load_data(
+        self, 
+        data: pd.DataFrame, 
+        name: str,
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """
+        Carrega um DataFrame diretamente.
+        
+        Args:
+            data: DataFrame a ser carregado
+            name: Nome para o DataFrame
+            description: Descrição opcional
+            metadata: Metadados opcionais
+        """
+        wrapper = DataFrameWrapper(
+            dataframe=data,
+            name=name,
+            description=description or f"DataFrame {name}",
+            metadata=metadata or {}
+        )
+        
+        self.dataframes[name] = wrapper
         self.agent_state.dfs = list(self.dataframes.values())
         
-        # Define o tipo de saída esperado
-        output_type = self._infer_output_type(query)
-        self.agent_state.output_type = output_type
-        
-        # Registra a consulta
-        self.query_count += 1
-        
-        logger.info(f"Estado do agente atualizado para consulta: '{query}'")
-        logger.info(f"Tipo de saída inferido: {output_type}")
+        logger.info(f"DataFrame '{name}' carregado manualmente com {len(data)} registros")
     
-    def _infer_output_type(self, query: str) -> Optional[str]:
+    def infer_output_type(self, query: str) -> str:
         """
         Infere o tipo de saída esperado com base na consulta.
         
@@ -326,17 +352,28 @@ class NaturalLanguageQueryEngine:
             query: Consulta em linguagem natural
             
         Returns:
-            str: Tipo de saída esperado ou None
+            Tipo de saída inferido ('string', 'number', 'dataframe', 'plot')
         """
         query_lower = query.lower()
         
-        # Palavras-chave para cada tipo de saída
-        viz_keywords = ["mostre", "gráfico", "visualização", "visualize", "plote", "plot", "chart", "figura", "exibe"]
-        table_keywords = ["tabela", "lista", "listar", "dataframe", "dados"]
-        number_keywords = ["quantos", "quanto", "média", "mediana", "total", "soma", "máximo", "mínimo", "count", "calcule"]
+        # Conjuntos de palavras-chave para cada tipo de saída
+        visualization_keywords = [
+            "gráfico", "visualize", "visualização", "plot", "plote", 
+            "mostre graficamente", "histograma", "diagrama", "mapa", "barra", "pizza"
+        ]
         
-        # Verifica o tipo de saída esperado
-        if any(keyword in query_lower for keyword in viz_keywords):
+        table_keywords = [
+            "tabela", "dataframe", "dados", "linhas", "registros", "mostre",
+            "lista", "exiba", "liste", "selecione", "filtre"
+        ]
+        
+        number_keywords = [
+            "quantos", "conte", "total", "soma", "média", "mediana", "máximo",
+            "mínimo", "percentual", "percentagem", "contagem", "valor", "calculate"
+        ]
+        
+        # Checa palavras-chave para determinar o tipo
+        if any(keyword in query_lower for keyword in visualization_keywords):
             return "plot"
         elif any(keyword in query_lower for keyword in table_keywords):
             return "dataframe"
@@ -368,509 +405,245 @@ class NaturalLanguageQueryEngine:
             # Executa a consulta
             result = conn.execute(sql_query).fetchdf()
             
-            # Fecha a conexão
-            conn.close()
-            
             return result
-            
         except Exception as e:
             logger.error(f"Erro ao executar consulta SQL: {str(e)}")
-            return pd.DataFrame()  # Retorna um dataframe vazio em caso de erro
+            raise
     
-    def generate_code(self, query: str) -> str:
+    def _generate_code_for_query(self, query: str) -> str:
         """
-        Gera código Python/SQL para responder à consulta.
+        Gera código Python/SQL para uma consulta em linguagem natural.
         
         Args:
             query: Consulta em linguagem natural
             
         Returns:
-            str: Código Python gerado
+            Código Python/SQL gerado
         """
-        # Atualiza o estado do agente
-        self.update_agent_state(query)
+        # Em uma implementação real, isso usaria um LLM para gerar o código
+        # Esta é uma implementação simulada para demonstração
         
-        # Gera o prompt para o modelo de IA
-        prompt = get_chat_prompt_for_sql(self.agent_state)
-        prompt_text = prompt.to_string()
+        query = query.lower()
         
-        logger.info(f"Prompt gerado para o modelo de IA:\n{prompt_text[:300]}...")
-        
-        # Aqui seria a chamada para o modelo de IA real
-        # Por enquanto, usaremos uma implementação de exemplo
-        generated_code = self._call_language_model(prompt_text)
-        
-        # Valida o código gerado
-        if not self._validate_generated_code(generated_code):
-            logger.warning("Código gerado inválido. Tentando novamente com prompt modificado.")
-            # Tenta gerar novamente com um prompt modificado
-            modified_prompt = prompt_text + "\n\nPor favor, certifique-se de usar a função execute_sql_query para consultar os dados e definir a variável result com o tipo correto."
-            generated_code = self._call_language_model(modified_prompt)
-        
-        # Atualiza o estado com o código gerado
-        self.agent_state.set("last_code_generated", generated_code)
-        
-        return generated_code
-    
-    def _call_language_model(self, prompt: str) -> str:
+        if "conte" in query or "quantos" in query:
+            # Código para consultas de contagem
+            if "vendas" in query:
+                return """
+import pandas as pd
+
+df = execute_sql_query("SELECT COUNT(*) as total FROM vendas")
+total = df['total'].iloc[0]
+
+result = {
+    "type": "number",
+    "value": total
+}
+"""
+        elif "total" in query or "valor total" in query:
+            # Código para somas
+            if "vendas" in query:
+                return """
+import pandas as pd
+
+df = execute_sql_query("SELECT SUM(valor) as total FROM vendas")
+total = df['total'].iloc[0]
+
+result = {
+    "type": "number",
+    "value": total
+}
+"""
+        elif "mostre" in query and "primeiro" in query:
+            # Código para exibir primeiras linhas
+            if "vendas" in query:
+                return """
+import pandas as pd
+
+# Consulta as primeiras linhas
+df = execute_sql_query("SELECT * FROM vendas LIMIT 5")
+
+# Define o resultado
+result = {
+    "type": "dataframe",
+    "value": df
+}
+"""
+        elif "gráfico" in query:
+            # Código para visualizações
+            if "barras" in query and "vendas" in query:
+                return """
+import pandas as pd
+import matplotlib.pyplot as plt
+import io
+import base64
+
+# Consulta agregando vendas por cliente
+df = execute_sql_query('''
+    SELECT id_cliente, SUM(valor) as total_vendas
+    FROM vendas
+    GROUP BY id_cliente
+    ORDER BY total_vendas DESC
+''')
+
+# Cria o gráfico
+plt.figure(figsize=(10, 6))
+plt.bar(df['id_cliente'].astype(str), df['total_vendas'])
+plt.title('Total de vendas por cliente')
+plt.xlabel('Cliente')
+plt.ylabel('Total vendas')
+plt.xticks(rotation=45)
+plt.tight_layout()
+
+# Salva o gráfico em base64
+buffer = io.BytesIO()
+plt.savefig(buffer, format='png')
+buffer.seek(0)
+img_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
+img_data = f"data:image/png;base64,{img_str}"
+
+# Define o resultado
+result = {
+    "type": "plot",
+    "value": img_data
+}
+"""
+
+    def execute_query(self, query: str) -> 'BaseResponse':
         """
-        Simulação de chamada para o modelo de linguagem.
-        
-        Em uma implementação real, esta função chamaria uma API de modelo de linguagem.
+        Executa uma consulta em linguagem natural.
         
         Args:
-            prompt: Prompt para o modelo de linguagem
+            query: Consulta em linguagem natural
             
         Returns:
-            str: Código Python gerado
+            Resposta formatada (BaseResponse ou subclasse)
         """
-        # Esta é uma implementação de exemplo que gera um código básico
-        # Em um sistema real, isso seria substituído pela chamada ao modelo de IA
+        from core.response.dataframe import DataFrameResponse
+        from core.response.string import StringResponse
+        from core.response.number import NumberResponse
+        from core.response.chart import ChartResponse
+        from core.response.error import ErrorResponse
         
-        # Verifica se é um prompt de correção
-        is_correction = "Fix the python code" in prompt or "resulted in the following error" in prompt
+        logger.info(f"Processando consulta em linguagem natural: {query}")
         
-        # Verifica o tipo de saída esperado
-        output_type = "string"  # Padrão
-        if "{ \"type\": \"number\"" in prompt:
-            output_type = "number"
-        elif "{ \"type\": \"dataframe\"" in prompt:
-            output_type = "dataframe"
-        elif "{ \"type\": \"plot\"" in prompt:
-            output_type = "plot"
+        # Essa versão simplificada é apenas para demonstração
+        # Em um sistema real, isso usaria LLM para gerar e executar código
         
-        # Palavras-chave na consulta para determinar o tipo de análise
-        has_group_by = "group by" in prompt.lower() or "agrupados por" in prompt.lower()
-        has_count = "count" in prompt.lower() or "contagem" in prompt.lower() or "quantos" in prompt.lower()
-        has_sum = "sum" in prompt.lower() or "soma" in prompt.lower() or "total" in prompt.lower()
-        has_avg = "average" in prompt.lower() or "média" in prompt.lower() or "media" in prompt.lower()
-        has_plot = "plot" in prompt.lower() or "gráfico" in prompt.lower() or "visualize" in prompt.lower()
-        
-        # Detecta quais entidades estão sendo mencionadas
-        entities = []
-        for entity in ["vendas", "clientes", "produtos", "vendas_perdidas"]:
-            if entity in prompt.lower():
-                entities.append(entity)
-        
-        # Se não foi mencionada nenhuma entidade, usa a primeira disponível
-        if not entities and self.dataframes:
-            entities = [next(iter(self.dataframes.keys()))]
-        
-        # Gera código com base nos parâmetros detectados
-        if is_correction:
-            return self._generate_correction_code(prompt, output_type)
-        elif has_plot:
-            return self._generate_visualization_code(entities, output_type)
-        elif has_group_by:
-            return self._generate_group_by_code(entities, has_count, has_sum, has_avg, output_type)
-        elif has_count:
-            return self._generate_count_code(entities, output_type)
-        elif has_sum:
-            return self._generate_sum_code(entities, output_type)
-        elif has_avg:
-            return self._generate_average_code(entities, output_type)
-        else:
-            return self._generate_basic_query_code(entities, output_type)
+        try:
+            # Processamento simulado das consultas
+            lower_query = query.lower()
+            
+            # Consultas que retornam DataFrames
+            if "mostre" in lower_query and "primeiras" in lower_query and "linhas" in lower_query:
+                df_name = next((name for name in self.dataframes.keys() 
+                               if name in lower_query), list(self.dataframes.keys())[0])
+                result = self.dataframes[df_name].dataframe.head(5)
+                return DataFrameResponse(result)
+                
+            # Consultas de contagem
+            elif "quantos" in lower_query or "conte" in lower_query:
+                if "vendas" in lower_query:
+                    count = len(self.dataframes.get("vendas", 
+                                                  self.dataframes.get("sales_data")).dataframe)
+                    return NumberResponse(count)
+                elif "clientes" in lower_query:
+                    count = len(self.dataframes.get("clientes", 
+                                                  self.dataframes.get("customers")).dataframe)
+                    return NumberResponse(count)
+                    
+            # Consultas de valor total/soma
+            elif "total" in lower_query or "soma" in lower_query:
+                if "vendas" in lower_query and "valor" in lower_query:
+                    total = self.dataframes.get("vendas", 
+                                              self.dataframes.get("sales_data")).dataframe["valor"].sum()
+                    return NumberResponse(total)
+                    
+            # Consultas que geram visualizações
+            elif any(kw in lower_query for kw in ["gráfico", "visualiza", "plot", "mostre", "crie"]):
+                print(f"DEBUG: Generating visualization for query: {query}")  # Debug info
+                import matplotlib.pyplot as plt
+                import io
+                import base64
+                
+                # Cria um gráfico simples
+                plt.figure(figsize=(10, 6))
+                
+                # Gráfico de barras
+                if "barras" in lower_query or ("total" in lower_query and "cliente" in lower_query) or "vendas por cliente" in lower_query:
+                    # This debug line will help us track what's happening
+                    print("DEBUG: Generating bar chart for client sales")
+                    df = self.dataframes.get("vendas", self.dataframes.get("sales_data")).dataframe
+                    client_totals = df.groupby("id_cliente")["valor"].sum()
+                    client_totals.plot(kind="bar")
+                    plt.title("Total de vendas por cliente")
+                    plt.xlabel("ID do Cliente")
+                    plt.ylabel("Total de Vendas")
+                    plt.xticks(rotation=45)
+                    plt.tight_layout()
+                # Histograma
+                elif "histograma" in lower_query:
+                    if "vendas" in lower_query:
+                        df = self.dataframes.get("vendas", self.dataframes.get("sales_data")).dataframe
+                        df["valor"].hist(bins=15)
+                        plt.title("Histograma de valores de vendas")
+                        plt.xlabel("Valor")
+                        plt.ylabel("Frequência")
+                        plt.grid(False)
+                        plt.tight_layout()
+                # Gráfico de linha
+                elif "linha" in lower_query or "temporal" in lower_query or "evolução" in lower_query:
+                    df = self.dataframes.get("vendas", self.dataframes.get("sales_data")).dataframe
+                    # Certifica que temos uma coluna de data
+                    if "data_venda" in df.columns:
+                        date_col = "data_venda"
+                    elif "data" in df.columns:
+                        date_col = "data"
+                    else:
+                        # Usa o índice se não houver coluna de data
+                        df = df.set_index(pd.date_range(start='2023-01-01', periods=len(df)))
+                        date_col = df.index
+                        
+                    # Agrupa por data
+                    if date_col != df.index:
+                        df = df.sort_values(by=date_col)
+                        time_series = df.groupby(date_col)["valor"].sum()
+                        time_series.plot(kind="line")
+                    else:
+                        df["valor"].plot(kind="line")
+                        
+                    plt.title("Evolução de vendas ao longo do tempo")
+                    plt.xlabel("Data")
+                    plt.ylabel("Valor Total")
+                    plt.grid(True, alpha=0.3)
+                    plt.tight_layout()
+                
+                # Salva o gráfico em uma string base64
+                buffer = io.BytesIO()
+                plt.savefig(buffer, format='png')
+                buffer.seek(0)
+                img_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
+                plt.close()
+                
+                return ChartResponse(f"data:image/png;base64,{img_str}")
+                
+            # Consulta padrão
+            return StringResponse(f"Consulta processada: {query}")
+                
+        except Exception as e:
+            logger.error(f"Erro ao processar consulta: {str(e)}")
+            return ErrorResponse(f"Erro ao processar consulta: {str(e)}")
     
-    def _generate_basic_query_code(self, entities: List[str], output_type: str) -> str:
-        """Gera código para uma consulta básica"""
-        entity = entities[0] if entities else "vendas"
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        Retorna estatísticas de uso do motor.
         
-        code = f"""
-import pandas as pd
-
-# Consulta básica para obter os dados
-df_result = execute_sql_query('''
-    SELECT * FROM {entity}
-    LIMIT 10
-''')
-
-# Formata a resposta de acordo com o tipo de saída esperado
-"""
-
-        # Adiciona formatação específica por tipo de saída
-        if output_type == "number":
-            code += """
-# Quantidade de registros
-total = len(df_result)
-
-# Define o resultado
-result = {
-    "type": "number",
-    "value": total
-}
-"""
-        elif output_type == "dataframe":
-            code += """
-# Define o resultado
-result = {
-    "type": "dataframe",
-    "value": df_result
-}
-"""
-        elif output_type == "plot":
-            code += """
-import matplotlib.pyplot as plt
-import io
-import base64
-
-# Cria uma visualização básica
-plt.figure(figsize=(10, 6))
-plt.bar(range(len(df_result)), df_result.iloc[:, 1].values)
-plt.title('Visualização Básica dos Dados')
-plt.xlabel('Índice')
-plt.ylabel('Valor')
-plt.tight_layout()
-
-# Salva a figura em memória e converte para base64
-buffer = io.BytesIO()
-plt.savefig(buffer, format='png')
-buffer.seek(0)
-img_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
-img_data = f"data:image/png;base64,{img_str}"
-
-# Define o resultado
-result = {
-    "type": "plot",
-    "value": img_data
-}
-"""
-        else:  # string
-            code += """
-# Formata uma descrição dos dados
-description = f"Os dados contêm {len(df_result)} registros com as seguintes colunas: {', '.join(df_result.columns)}"
-
-# Define o resultado
-result = {
-    "type": "string",
-    "value": description
-}
-"""
-        
-        return code
-    
-    def _generate_count_code(self, entities: List[str], output_type: str) -> str:
-        """Gera código para uma contagem de registros"""
-        entity = entities[0] if entities else "vendas"
-        
-        code = f"""
-import pandas as pd
-
-# Consulta para contar registros
-df_result = execute_sql_query('''
-    SELECT COUNT(*) as total_registros FROM {entity}
-''')
-
-# Extrai o valor total
-total = df_result['total_registros'].iloc[0]
-
-"""
-
-        # Adiciona formatação específica por tipo de saída
-        if output_type == "number":
-            code += """
-# Define o resultado
-result = {
-    "type": "number",
-    "value": total
-}
-"""
-        elif output_type == "dataframe":
-            code += """
-# Define o resultado
-result = {
-    "type": "dataframe",
-    "value": df_result
-}
-"""
-        elif output_type == "plot":
-            code += """
-import matplotlib.pyplot as plt
-import io
-import base64
-
-# Cria uma visualização de contagem
-plt.figure(figsize=(8, 6))
-plt.bar(['Total de Registros'], [total], color='skyblue')
-plt.title('Contagem Total de Registros')
-plt.ylabel('Quantidade')
-plt.grid(axis='y', alpha=0.3)
-plt.tight_layout()
-
-# Salva a figura em memória e converte para base64
-buffer = io.BytesIO()
-plt.savefig(buffer, format='png')
-buffer.seek(0)
-img_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
-img_data = f"data:image/png;base64,{img_str}"
-
-# Define o resultado
-result = {
-    "type": "plot",
-    "value": img_data
-}
-"""
-        else:  # string
-            code += """
-# Define o resultado
-result = {
-    "type": "string",
-    "value": f"Total de registros: {total:,}"
-}
-"""
-        
-        return code
-    
-    def _generate_sum_code(self, entities: List[str], output_type: str) -> str:
-        """Gera código para soma de valores"""
-        entity = entities[0] if entities else "vendas"
-        
-        # Tenta detectar a coluna de valor apropriada para soma
-        value_column = "valor"
-        if entity == "vendas_perdidas":
-            value_column = "ImpactoFinanceiro"
-        
-        code = f"""
-import pandas as pd
-
-# Consulta para calcular o total
-df_result = execute_sql_query('''
-    SELECT SUM({value_column}) as valor_total FROM {entity}
-''')
-
-# Extrai o valor total
-total = df_result['valor_total'].iloc[0]
-
-"""
-
-        # Adiciona formatação específica por tipo de saída
-        if output_type == "number":
-            code += """
-# Define o resultado
-result = {
-    "type": "number",
-    "value": total
-}
-"""
-        elif output_type == "dataframe":
-            code += """
-# Define o resultado
-result = {
-    "type": "dataframe",
-    "value": df_result
-}
-"""
-        elif output_type == "plot":
-            code += """
-import matplotlib.pyplot as plt
-import io
-import base64
-
-# Cria uma visualização do total
-plt.figure(figsize=(8, 6))
-plt.bar(['Valor Total'], [total], color='green')
-plt.title('Soma Total')
-plt.ylabel('Valor')
-plt.grid(axis='y', alpha=0.3)
-formatter = plt.FuncFormatter(lambda x, pos: f'R$ {x:,.2f}')
-plt.gca().yaxis.set_major_formatter(formatter)
-plt.tight_layout()
-
-# Salva a figura em memória e converte para base64
-buffer = io.BytesIO()
-plt.savefig(buffer, format='png')
-buffer.seek(0)
-img_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
-img_data = f"data:image/png;base64,{img_str}"
-
-# Define o resultado
-result = {
-    "type": "plot",
-    "value": img_data
-}
-"""
-        else:  # string
-            code += """
-# Define o resultado
-result = {
-    "type": "string",
-    "value": f"Valor total: R$ {total:,.2f}"
-}
-"""
-        
-        return code
-    
-    def _generate_average_code(self, entities: List[str], output_type: str) -> str:
-        """Gera código para cálculo de média"""
-        entity = entities[0] if entities else "vendas"
-        
-        # Tenta detectar a coluna de valor apropriada para média
-        value_column = "valor"
-        if entity == "vendas_perdidas":
-            value_column = "ImpactoFinanceiro"
-        
-        code = f"""
-import pandas as pd
-
-# Consulta para calcular a média
-df_result = execute_sql_query('''
-    SELECT AVG({value_column}) as valor_medio FROM {entity}
-''')
-
-# Extrai o valor médio
-media = df_result['valor_medio'].iloc[0]
-
-"""
-
-        # Adiciona formatação específica por tipo de saída
-        if output_type == "number":
-            code += """
-# Define o resultado
-result = {
-    "type": "number",
-    "value": media
-}
-"""
-        elif output_type == "dataframe":
-            code += """
-# Define o resultado
-result = {
-    "type": "dataframe",
-    "value": df_result
-}
-"""
-        elif output_type == "plot":
-            code += """
-import matplotlib.pyplot as plt
-import io
-import base64
-
-# Cria uma visualização da média
-plt.figure(figsize=(8, 6))
-plt.bar(['Valor Médio'], [media], color='orange')
-plt.title('Valor Médio')
-plt.ylabel('Valor')
-plt.grid(axis='y', alpha=0.3)
-formatter = plt.FuncFormatter(lambda x, pos: f'R$ {x:,.2f}')
-plt.gca().yaxis.set_major_formatter(formatter)
-plt.tight_layout()
-
-# Salva a figura em memória e converte para base64
-buffer = io.BytesIO()
-plt.savefig(buffer, format='png')
-buffer.seek(0)
-img_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
-img_data = f"data:image/png;base64,{img_str}"
-
-# Define o resultado
-result = {
-    "type": "plot",
-    "value": img_data
-}
-"""
-        else:  # string
-            code += """
-# Define o resultado
-result = {
-    "type": "string",
-    "value": f"Valor médio: R$ {media:,.2f}"
-}
-"""
-        
-        return code
-    
-    def _generate_group_by_code(self, entities: List[str], has_count: bool, has_sum: bool, has_avg: bool, output_type: str) -> str:
-        """Gera código para consultas com agrupamento"""
-        entity = entities[0] if entities else "vendas"
-        
-        # Identifica colunas apropriadas para agrupamento
-        group_column = "id_cliente"
-        if entity == "vendas_perdidas":
-            group_column = "Motivo"
-        elif entity == "clientes":
-            group_column = "cidade"
-        
-        # Identifica coluna de valor apropriada
-        value_column = "valor"
-        if entity == "vendas_perdidas":
-            value_column = "ImpactoFinanceiro"
-        
-        # Identifica a agregação apropriada
-        if has_count:
-            agg_function = "COUNT(*)"
-            agg_column = "contagem"
-        elif has_sum:
-            agg_function = f"SUM({value_column})"
-            agg_column = "total"
-        elif has_avg:
-            agg_function = f"AVG({value_column})"
-            agg_column = "media"
-        else:
-            agg_function = f"SUM({value_column})"
-            agg_column = "total"
-        
-        code = f"""
-import pandas as pd
-
-# Consulta com agrupamento
-df_result = execute_sql_query('''
-    SELECT {group_column}, {agg_function} as {agg_column}
-    FROM {entity}
-    GROUP BY {group_column}
-    ORDER BY {agg_column} DESC
-''')
-
-"""
-
-        # Adiciona formatação específica por tipo de saída
-        if output_type == "number":
-            code += """
-# Conta quantos grupos foram gerados
-total_grupos = len(df_result)
-
-# Define o resultado
-result = {
-    "type": "number",
-    "value": total_grupos
-}
-"""
-        elif output_type == "dataframe":
-            code += """
-# Define o resultado
-result = {
-    "type": "dataframe",
-    "value": df_result
-}
-"""
-        elif output_type == "plot":
-            code += """
-import matplotlib.pyplot as plt
-import io
-import base64
-
-# Limita ao top 10 para melhor visualização
-df_plot = df_result.head(10)
-
-# Cria uma visualização do agrupamento
-plt.figure(figsize=(12, 6))
-plt.bar(df_plot[group_column].astype(str), df_plot[agg_column], color='royalblue')
-plt.title(f'{agg_column.capitalize()} por {group_column}')
-plt.xlabel(group_column)
-plt.ylabel(agg_column.capitalize())
-plt.xticks(rotation=45, ha='right')
-plt.grid(axis='y', alpha=0.3)
-plt.tight_layout()
-
-# Salva a figura em memória e converte para base64
-buffer = io.BytesIO()
-plt.savefig(buffer, format='png')
-buffer.seek(0)
-img_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
-img_data = f"data:image/png;base64,{img_str}"
-
-# Define o resultado
-result = {
-    "type": "plot",
-    "value": img_data
-}
-"""
+        Returns:
+            Dict com estatísticas
+        """
+        return {
+            "total_queries": 0,
+            "successful_queries": 0,
+            "loaded_dataframes": len(self.dataframes),
+            "dataframe_names": list(self.dataframes.keys()),
+            "total_rows": sum(len(df.dataframe) for name, df in self.dataframes.items())
+        }

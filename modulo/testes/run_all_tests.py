@@ -25,7 +25,7 @@ from typing import Dict, List, Any
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Importa cenários de teste
-from test_scenarios import (
+from testes.test_scenarios import (
     scenario1_basic_queries,
     scenario2_data_analysis,
     scenario3_error_handling

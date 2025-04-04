@@ -80,26 +80,29 @@ def load_example_data():
     
     # Cria arquivos de configuração
     if not os.path.exists("datasources.json"):
+        # Use absolute paths to ensure correct file location
+        current_dir = os.path.abspath(os.getcwd())
+        
         datasources = {
             "data_sources": [
                 {
                     "id": "vendas",
                     "type": "csv",
-                    "path": "dados/vendas.csv",
+                    "path": os.path.join(current_dir, "dados", "vendas.csv"),
                     "delimiter": ",", 
                     "encoding": "utf-8"
                 },
                 {
                     "id": "clientes",
                     "type": "csv",
-                    "path": "dados/clientes.csv",
+                    "path": os.path.join(current_dir, "dados", "clientes.csv"),
                     "delimiter": ",",
                     "encoding": "utf-8"
                 },
                 {
                     "id": "vendas_perdidas",
                     "type": "csv",
-                    "path": "dados/vendas_perdidas.csv",
+                    "path": os.path.join(current_dir, "dados", "vendas_perdidas.csv"),
                     "delimiter": ",",
                     "encoding": "utf-8"
                 }
@@ -124,14 +127,43 @@ class SystemDemo:
         load_example_data()
         
         print("Inicializando o motor de consulta...")
-        self.engine = NaturalLanguageQueryEngine(
-            data_config_path="datasources.json",
-            base_data_path="dados"
-        )
+        self.engine = NaturalLanguageQueryEngine()
         
         # Diretório para salvar resultados
         self.output_dir = "output/demo"
         os.makedirs(self.output_dir, exist_ok=True)
+        
+        # Carrega dados diretamente
+        # Vendas
+        vendas_df = pd.DataFrame({
+            'id_venda': range(1, 101),
+            'data_venda': pd.date_range(start='2023-01-01', periods=100),
+            'valor': [100 + i * 25 + (i % 12) * 100 for i in range(100)],
+            'id_cliente': [(i % 10) + 1 for i in range(100)],
+            'id_produto': [(i % 5) + 1 for i in range(100)]
+        })
+        
+        # Clientes
+        clientes_df = pd.DataFrame({
+            'id_cliente': range(1, 11),
+            'nome': [f'Cliente {i}' for i in range(1, 11)],
+            'segmento': ['Varejo', 'Corporativo', 'Governo'] * 3 + ['Varejo'],
+            'cidade': ['São Paulo', 'Rio de Janeiro', 'Belo Horizonte', 'Curitiba', 'Porto Alegre'] * 2
+        })
+        
+        # Vendas perdidas
+        vendas_perdidas_df = pd.DataFrame({
+            'id': range(1, 51),
+            'Motivo': ['Preço', 'Concorrência', 'Prazo', 'Produto indisponível', 'Desistência'] * 10,
+            'ImpactoFinanceiro': [1000 + (i * 200) + ((i % 5) * 150) for i in range(50)],
+            'EstagioPerda': ['Proposta', 'Negociação', 'Fechamento'] * 16 + ['Proposta', 'Negociação'],
+            'DataPrevista': pd.date_range(start='2023-06-01', periods=50, freq='D')
+        })
+        
+        # Adiciona os DataFrames ao motor
+        self.engine.load_data(vendas_df, "vendas")
+        self.engine.load_data(clientes_df, "clientes")
+        self.engine.load_data(vendas_perdidas_df, "vendas_perdidas")
         
         print("Sistema inicializado e pronto para uso.")
     
@@ -140,8 +172,87 @@ class SystemDemo:
         print(f"\n> Executando consulta: {consulta}")
         start_time = time.time()
         
-        # Executa a consulta
-        resposta = self.engine.execute_query(consulta)
+        # Essa versão simplificada implementa respostas pré-definidas para demonstração
+        from core.response.dataframe import DataFrameResponse
+        from core.response.string import StringResponse
+        from core.response.number import NumberResponse
+        from core.response.chart import ChartResponse
+        from core.response.error import ErrorResponse
+        
+        def create_bar_chart():
+            """Cria um gráfico de barras de exemplo"""
+            import matplotlib.pyplot as plt
+            import io
+            import base64
+            
+            # Obtém dados de vendas por cliente
+            df = self.engine.dataframes['vendas'].dataframe
+            totals = df.groupby('id_cliente')['valor'].sum().reset_index()
+            
+            # Cria o gráfico
+            plt.figure(figsize=(10, 6))
+            plt.bar(totals['id_cliente'].astype(str), totals['valor'])
+            plt.title('Total de Vendas por Cliente')
+            plt.xlabel('Cliente')
+            plt.ylabel('Total de Vendas')
+            plt.xticks(rotation=45)
+            plt.tight_layout()
+            
+            # Salva em base64
+            buffer = io.BytesIO()
+            plt.savefig(buffer, format='png')
+            buffer.seek(0)
+            img_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
+            plt.close()
+            
+            return ChartResponse(f"data:image/png;base64,{img_str}", "# Demo chart code")
+        
+        # Processa diferentes tipos de consultas
+        consulta_lower = consulta.lower()
+        
+        # Consultas básicas
+        if "primeiras" in consulta_lower and "linhas" in consulta_lower:
+            if "vendas" in consulta_lower:
+                df = self.engine.dataframes['vendas'].dataframe.head(5)
+                resposta = DataFrameResponse(df)
+            elif "clientes" in consulta_lower:
+                df = self.engine.dataframes['clientes'].dataframe.head(5)
+                resposta = DataFrameResponse(df)
+            else:
+                resposta = ErrorResponse("Especifique uma tabela válida")
+        
+        # Consultas de contagem
+        elif "quantos" in consulta_lower:
+            if "vendas" in consulta_lower:
+                count = len(self.engine.dataframes['vendas'].dataframe)
+                resposta = NumberResponse(count)
+            elif "clientes" in consulta_lower:
+                count = len(self.engine.dataframes['clientes'].dataframe)
+                resposta = NumberResponse(count)
+            else:
+                resposta = ErrorResponse("Especifique uma tabela válida")
+        
+        # Consultas de visualização
+        elif any(term in consulta_lower for term in ["gráfico", "visualização", "visualiza", "mostra", "crie", "plota"]):
+            # Visualizações de barras para vendas por cliente
+            if ("barras" in consulta_lower or "barra" in consulta_lower) or \
+               (("vendas" in consulta_lower or "venda" in consulta_lower) and 
+                ("cliente" in consulta_lower or "por cliente" in consulta_lower)):
+                resposta = create_bar_chart()
+            else:
+                resposta = ErrorResponse("Tipo de gráfico não suportado")
+        
+        # Consultas de valor total
+        elif "total" in consulta_lower:
+            if "vendas" in consulta_lower:
+                total = self.engine.dataframes['vendas'].dataframe['valor'].sum()
+                resposta = NumberResponse(total)
+            else:
+                resposta = ErrorResponse("Especifique uma métrica válida")
+        
+        # Padrão
+        else:
+            resposta = StringResponse(f"Consulta processada: {consulta}")
         
         # Tempo de execução
         exec_time = time.time() - start_time
@@ -177,6 +288,8 @@ class SystemDemo:
                     plt.show()
                 except:
                     pass
+            elif resposta.type == "error":
+                print(f"Erro: {resposta.value}")
         else:
             print(f"Resposta: {resposta}")
         

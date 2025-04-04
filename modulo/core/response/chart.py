@@ -12,12 +12,12 @@ class ChartResponse(BaseResponse):
     Class for handling chart/plot responses.
     """
 
-    def __init__(self, value: Any, last_code_executed: str):
+    def __init__(self, value: Any, last_code_executed: str = None):
         """
         Initialize a chart response.
         
         :param value: The chart value (path or base64 data)
-        :param last_code_executed: The code that generated this value
+        :param last_code_executed: The code that generated this value (optional)
         """
         super().__init__(value, "chart", last_code_executed)
 
