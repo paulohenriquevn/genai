@@ -1,4 +1,5 @@
 import os
+import glob
 import json
 import pandas as pd
 import logging
@@ -252,6 +253,7 @@ class CsvConnector(DataConnector):
     
     Estende o CsvConnector padrão para utilizar informações de metadados
     para melhorar a interpretação e transformação dos dados.
+    Suporta a leitura de um diretório contendo múltiplos arquivos CSV.
     """
     
     def __init__(self, config: Union[DataSourceConfig]):
@@ -264,86 +266,151 @@ class CsvConnector(DataConnector):
         self.config = config
         self.data = None
         self._connected = False
+        self.is_directory = False
+        self.csv_files = []
+        self.dataframes = {}
         
         # Validação de parâmetros obrigatórios
         if 'path' not in self.config.params:
             raise ConfigurationException("Parâmetro 'path' é obrigatório para fontes CSV")
-        
-    
+
     def connect(self) -> None:
         """
-        Carrega o arquivo CSV na memória.
+        Carrega o arquivo CSV ou diretório de CSVs na memória.
         """
         try:
             path = self.config.params['path']
             delimiter = self.config.params.get('delimiter', ',')
             encoding = self.config.params.get('encoding', 'utf-8')
             
-            logger.info(f"Conectando ao CSV: {path}")
-            self.data = pd.read_csv(
-                path, 
-                delimiter=delimiter, 
-                encoding=encoding
-            )
-            self._connected = True
-            logger.info(f"Conectado com sucesso ao CSV: {path}")
+            # Verifica se o caminho é um diretório
+            if os.path.isdir(path):
+                self.is_directory = True
+                pattern = self.config.params.get('pattern', '*.csv')
+                logger.info(f"Conectando ao diretório de CSVs: {path} com padrão {pattern}")
+                
+                # Lista todos os arquivos CSV no diretório
+                self.csv_files = glob.glob(os.path.join(path, pattern))
+                
+                if not self.csv_files:
+                    logger.warning(f"Nenhum arquivo CSV encontrado no diretório: {path}")
+                    self._connected = False
+                    return
+                
+                # Carrega cada arquivo CSV em um DataFrame separado
+                for csv_file in self.csv_files:
+                    try:
+                        file_name = os.path.basename(csv_file)
+                        logger.info(f"Carregando arquivo CSV: {file_name}")
+                        
+                        df = pd.read_csv(
+                            csv_file,
+                            delimiter=delimiter,
+                            encoding=encoding
+                        )
+                        
+                        # Aplica transformações baseadas em metadados para cada DataFrame
+                        if hasattr(self.config, 'metadata') and self.config.metadata:
+                            df = self._apply_metadata_transformations(df)
+                        
+                        self.dataframes[file_name] = df
+                        
+                    except Exception as e:
+                        logger.error(f"Erro ao carregar arquivo CSV {file_name}: {str(e)}")
+                
+                # Se pelo menos um arquivo foi carregado com sucesso, consideramos conectado
+                if self.dataframes:
+                    self._connected = True
+                    
+                    # Concatena todos os DataFrames para consultas simples (sem joins)
+                    # Esta é uma abordagem simples que pode ser refinada depois
+                    if self.config.params.get('auto_concat', True):
+                        try:
+                            self.data = pd.concat(self.dataframes.values(), ignore_index=True)
+                            logger.info(f"DataFrames concatenados com sucesso. Total de {len(self.data)} linhas.")
+                        except Exception as e:
+                            logger.warning(f"Não foi possível concatenar os DataFrames: {str(e)}")
+                            # Usa o primeiro DataFrame como fallback
+                            self.data = next(iter(self.dataframes.values()))
+                else:
+                    self._connected = False
+                
+            else:
+                # Comportamento original para um único arquivo
+                logger.info(f"Conectando ao CSV: {path}")
+                self.data = pd.read_csv(
+                    path, 
+                    delimiter=delimiter, 
+                    encoding=encoding
+                )
+                self._connected = True
+                logger.info(f"Conectado com sucesso ao CSV: {path}")
+                
+                # Se conectou com sucesso e tem metadados, aplica transformações
+                if self._connected and self.data is not None and hasattr(self.config, 'metadata') and self.config.metadata:
+                    self.data = self._apply_metadata_transformations(self.data)
+                
         except Exception as e:
             self._connected = False
             error_msg = f"Erro ao conectar com CSV {self.config.params.get('path')}: {str(e)}"
             logger.error(error_msg)
             raise DataConnectionException(error_msg) from e
-        
-        # Se conectou com sucesso e tem metadados, aplica transformações
-        if self._connected and self.data is not None and hasattr(self.config, 'metadata') and self.config.metadata:
-            self._apply_metadata_transformations()
-        
 
-    def _apply_metadata_transformations(self) -> None:
+    def _apply_metadata_transformations(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Aplica transformações baseadas em metadados aos dados carregados.
-        """
-        if self.data is None or not hasattr(self.config, 'metadata') or not self.config.metadata:
-            return
         
+        Args:
+            df: DataFrame a ser transformado
+            
+        Returns:
+            pd.DataFrame: DataFrame transformado
+        """
+        if df is None or not hasattr(self.config, 'metadata') or not self.config.metadata:
+            return df
+        
+        result_df = df.copy()
         metadata = self.config.metadata
         
         # Aplica conversões de tipo para cada coluna com metadados
         for column_name, column_metadata in metadata.columns.items():
-            if column_name in self.data.columns and column_metadata.data_type:
+            if column_name in result_df.columns and column_metadata.data_type:
                 try:
                     # Conversão baseada no tipo definido nos metadados
-                    self._convert_column_type(column_name, column_metadata)
+                    result_df = self._convert_column_type(result_df, column_name, column_metadata)
                 except Exception as e:
                     logger.warning(f"Erro ao converter coluna {column_name}: {str(e)}")
-    
-    def _convert_column_type(self, column_name: str, metadata: ColumnMetadata) -> None:
+        
+        return result_df
+
+    def _convert_column_type(self, df: pd.DataFrame, column_name: str, metadata: ColumnMetadata) -> pd.DataFrame:
         """
         Converte uma coluna para o tipo especificado nos metadados.
         
         Args:
-            column_name: Nome da coluna a converter.
-            metadata: Metadados da coluna.
-        """
-        import pandas as pd
-        
-        if self.data is None:
-            return
+            df: DataFrame contendo a coluna
+            column_name: Nome da coluna a converter
+            metadata: Metadados da coluna
             
+        Returns:
+            pd.DataFrame: DataFrame com a coluna convertida
+        """
+        result_df = df.copy()
         data_type = metadata.data_type
         format_str = metadata.format
         
         try:
             # Conversão de acordo com o tipo
             if data_type == 'int':
-                self.data[column_name] = pd.to_numeric(self.data[column_name], errors='coerce').astype('Int64')
+                result_df[column_name] = pd.to_numeric(result_df[column_name], errors='coerce').astype('Int64')
                 logger.info(f"Coluna {column_name} convertida para inteiro")
                 
             elif data_type == 'float':
-                self.data[column_name] = pd.to_numeric(self.data[column_name], errors='coerce')
+                result_df[column_name] = pd.to_numeric(result_df[column_name], errors='coerce')
                 logger.info(f"Coluna {column_name} convertida para float")
                 
             elif data_type == 'date':
-                self.data[column_name] = pd.to_datetime(self.data[column_name], format=format_str, errors='coerce')
+                result_df[column_name] = pd.to_datetime(result_df[column_name], format=format_str, errors='coerce')
                 logger.info(f"Coluna {column_name} convertida para data")
                 
             elif data_type == 'bool':
@@ -360,15 +427,17 @@ class CsvConnector(DataConnector):
                             return False
                     return x
                 
-                self.data[column_name] = self.data[column_name].apply(to_bool)
+                result_df[column_name] = result_df[column_name].apply(to_bool)
                 logger.info(f"Coluna {column_name} convertida para booleano")
                 
         except Exception as e:
             logger.warning(f"Erro ao converter coluna {column_name} para {data_type}: {str(e)}")
-    
+        
+        return result_df
+
     def read_data(self, query: Optional[str] = None) -> pd.DataFrame:
         """
-        Lê dados do CSV, opcionalmente aplicando uma consulta SQL.
+        Lê dados do CSV ou diretório de CSVs, opcionalmente aplicando uma consulta SQL.
         
         Args:
             query: Consulta SQL opcional para filtrar ou transformar os dados.
@@ -380,38 +449,94 @@ class CsvConnector(DataConnector):
             raise DataConnectionException("Não conectado à fonte de dados. Chame connect() primeiro.")
             
         try:
-            
+            # Caso mais simples: sem query retorna todos os dados (já concatenados)
             if not query:
-                return self.data.copy()
+                if self.is_directory and self.config.params.get('return_dict', False):
+                    # Retorna um dicionário de DataFrames para processamento avançado
+                    return self.dataframes
+                return self.data.copy() if self.data is not None else pd.DataFrame()
             
-            if query and hasattr(self.config, 'metadata') and self.config.metadata:
+            # Adapta a query com metadados se necessário
+            if hasattr(self.config, 'metadata') and self.config.metadata:
                 query = self._adapt_query_with_metadata(query)
-                
-            # Usando pandas para executar SQL na memória
+            
+            # Se for um diretório, precisamos de lógica especial para consultas
+            if self.is_directory and self.dataframes:
+                return self._execute_query_on_directory(query)
+            
+            # Comportamento padrão para um único DataFrame
             import sqlite3
-            from pandas.io.sql import pandasSQL_builder
             
             # Criamos uma conexão SQLite em memória
             conn = sqlite3.connect(':memory:')
             
             # Registramos o DataFrame como uma tabela temporária
             table_name = f"csv_data_{self.config.source_id}"
-            self.data.to_sql(table_name, conn, if_exists='replace', index=False)
+            if self.data is not None:
+                self.data.to_sql(table_name, conn, if_exists='replace', index=False)
             
-            # Substituímos referências à tabela na query
-            modified_query = query.replace("FROM csv", f"FROM {table_name}")
-            
-            # Executamos a query
-            result = pd.read_sql_query(modified_query, conn)
-            conn.close()
-            
-            return result
+                # Substituímos referências à tabela na query
+                modified_query = query.replace("FROM csv", f"FROM {table_name}")
+                
+                # Executamos a query
+                result = pd.read_sql_query(modified_query, conn)
+                conn.close()
+                
+                return result
+            else:
+                return pd.DataFrame()
             
         except Exception as e:
             error_msg = f"Erro ao ler dados do CSV: {str(e)}"
             logger.error(error_msg)
             raise DataReadException(error_msg) from e
-    
+
+    def _execute_query_on_directory(self, query: str) -> pd.DataFrame:
+        """
+        Executa uma consulta SQL em um diretório de arquivos CSV.
+        
+        Args:
+            query: Consulta SQL a ser executada.
+            
+        Returns:
+            pd.DataFrame: Resultado da consulta.
+        """
+        import sqlite3
+        
+        # Criamos uma conexão SQLite em memória
+        conn = sqlite3.connect(':memory:')
+        
+        # Registramos cada DataFrame como uma tabela temporária separada
+        for file_name, df in self.dataframes.items():
+            # Remove a extensão e caracteres especiais para criar nomes de tabela válidos
+            table_name = os.path.splitext(file_name)[0]
+            table_name = ''.join(c if c.isalnum() else '_' for c in table_name)
+            df.to_sql(table_name, conn, if_exists='replace', index=False)
+            logger.info(f"Registrado arquivo {file_name} como tabela {table_name}")
+        
+        # Registramos também o DataFrame concatenado para consultas simples
+        if self.data is not None:
+            combined_table = f"csv_data_{self.config.source_id}"
+            self.data.to_sql(combined_table, conn, if_exists='replace', index=False)
+            
+            # Substituímos referências genéricas à tabela na query
+            modified_query = query.replace("FROM csv", f"FROM {combined_table}")
+        else:
+            modified_query = query
+        
+        try:
+            # Executamos a query
+            logger.info(f"Executando query: {modified_query}")
+            result = pd.read_sql_query(modified_query, conn)
+            return result
+        except Exception as e:
+            logger.error(f"Erro ao executar query: {str(e)}")
+            # Tenta inferir os nomes das tabelas na query
+            error_msg = f"Erro ao executar query. Certifique-se de usar os nomes corretos das tabelas: {', '.join(self.dataframes.keys())}"
+            raise DataReadException(error_msg) from e
+        finally:
+            conn.close()
+
     def _adapt_query_with_metadata(self, query: str) -> str:
         """
         Adapta uma consulta SQL usando informações de metadados.
@@ -437,15 +562,17 @@ class CsvConnector(DataConnector):
         
         logger.info(f"Query adaptada com metadados: {adapted_query}")
         return adapted_query
-    
+
     def close(self) -> None:
         """
         Libera recursos. Para CSV, apenas limpa a referência aos dados.
         """
         self.data = None
+        self.dataframes = {}
+        self.csv_files = []
         self._connected = False
         logger.info(f"Conexão CSV fechada: {self.config.params.get('path')}")
-    
+
     def is_connected(self) -> bool:
         """
         Verifica se o conector está ativo.
@@ -453,7 +580,22 @@ class CsvConnector(DataConnector):
         Returns:
             bool: True se conectado, False caso contrário.
         """
-        return self._connected and self.data is not None
+        if self.is_directory:
+            return self._connected and bool(self.dataframes)
+        else:
+            return self._connected and self.data is not None
+
+    def get_available_tables(self) -> List[str]:
+        """
+        Retorna uma lista de tabelas disponíveis (nomes de arquivos) quando estiver no modo diretório.
+        
+        Returns:
+            List[str]: Lista de nomes de arquivos/tabelas disponíveis
+        """
+        if not self.is_directory:
+            return []
+        
+        return list(self.dataframes.keys())
 
 
 class PostgresConnector(DataConnector):
@@ -576,12 +718,16 @@ class DuckDBCsvConnector(DataConnector):
     
     Este conector utiliza DuckDB para processar consultas SQL em arquivos CSV
     de forma eficiente, com suporte adicional para metadados de colunas.
+    Suporta a leitura de um diretório contendo múltiplos arquivos CSV.
     
     Attributes:
         config: Configuração do conector.
         connection: Conexão com o DuckDB.
         table_name: Nome da tabela no DuckDB.
         column_mapping: Mapeamento entre aliases e nomes reais de colunas.
+        is_directory: Flag indicando se o caminho é um diretório.
+        csv_files: Lista de arquivos CSV no diretório.
+        tables: Dicionário de nomes de tabelas registradas.
     """
     
     def __init__(self, config: Union[DataSourceConfig]):
@@ -595,6 +741,9 @@ class DuckDBCsvConnector(DataConnector):
         self.connection = None
         self.table_name = f"csv_data_{self.config.source_id}"
         self.column_mapping = {}
+        self.is_directory = False
+        self.csv_files = []
+        self.tables = {}
         
         # Validação de parâmetros obrigatórios
         if 'path' not in self.config.params:
@@ -602,109 +751,151 @@ class DuckDBCsvConnector(DataConnector):
     
     def connect(self) -> None:
         """
-        Estabelece conexão com o DuckDB e registra o arquivo CSV como uma tabela.
+        Estabelece conexão com o DuckDB e registra o arquivo CSV ou diretório como tabelas.
         """
         try:
             import duckdb
             
-            # Verificação do caminho do arquivo
+            # Inicializa a conexão DuckDB
+            self.connection = duckdb.connect(database=':memory:')
+            
             path = self.config.params['path']
-            if not os.path.exists(path):
-                # Tenta encontrar o arquivo no diretório atual
-                current_dir = os.getcwd()
-                base_filename = os.path.basename(path)
-                alternative_path = os.path.join(current_dir, base_filename)
+            
+            # Verifica se o caminho é um diretório
+            if os.path.isdir(path):
+                self.is_directory = True
+                pattern = self.config.params.get('pattern', '*.csv')
+                logger.info(f"Conectando ao diretório de CSVs via DuckDB: {path} com padrão {pattern}")
                 
-                if os.path.exists(alternative_path):
-                    logger.info(f"Arquivo não encontrado em {path}, usando alternativa: {alternative_path}")
-                    path = alternative_path
-                else:
-                    logger.warning(f"Arquivo CSV não encontrado: {path}. Criando tabela vazia.")
-                    self.connection = duckdb.connect(database=':memory:')
-                    empty_df = pd.DataFrame()
-                    self.connection.register(self.table_name, empty_df)
+                # Lista todos os arquivos CSV no diretório
+                self.csv_files = glob.glob(os.path.join(path, pattern))
+                
+                if not self.csv_files:
+                    logger.warning(f"Nenhum arquivo CSV encontrado no diretório: {path}")
                     return
-            
-            logger.info(f"Conectando ao CSV via DuckDB com metadados: {path}")
-            
-            # Método 1: Usar pandas + registro no DuckDB
-            try:
-                # Determina o delimitador
+                
+                # Determina parâmetros para leitura dos CSVs
                 delim = self.config.params.get('delim', 
-                         self.config.params.get('sep', 
-                         self.config.params.get('delimiter', ',')))
+                        self.config.params.get('sep', 
+                        self.config.params.get('delimiter', ',')))
                 
-                encoding = self.config.params.get('encoding', 'utf-8')
+                has_header = self.config.params.get('header', True)
+                auto_detect = self.config.params.get('auto_detect', True)
                 
-                # Tenta ler com pandas e registrar no DuckDB
-                self.connection = duckdb.connect(database=':memory:')
+                # Registra cada arquivo CSV como uma view/tabela no DuckDB
+                for csv_file in self.csv_files:
+                    try:
+                        file_name = os.path.basename(csv_file)
+                        # Remove a extensão e caracteres especiais para criar nomes de tabela válidos
+                        table_name = os.path.splitext(file_name)[0]
+                        table_name = ''.join(c if c.isalnum() else '_' for c in table_name)
+                        
+                        # Constrói a query para criar a view
+                        query_parts = [f"CREATE VIEW {table_name} AS SELECT * FROM read_csv('{csv_file}'"]
+                        params = []
+                        
+                        params.append(f"delim='{delim}'")
+                        params.append(f"header={str(has_header).lower()}")
+                        params.append(f"auto_detect={str(auto_detect).lower()}")
+                        
+                        if params:
+                            query_parts.append(", " + ", ".join(params))
+                        
+                        query_parts.append(")")
+                        create_query = "".join(query_parts)
+                        
+                        logger.info(f"Registrando arquivo {file_name} como tabela {table_name}")
+                        logger.debug(f"Query: {create_query}")
+                        
+                        self.connection.execute(create_query)
+                        self.tables[file_name] = table_name
+                        
+                    except Exception as e:
+                        logger.error(f"Erro ao registrar arquivo CSV {file_name}: {str(e)}")
                 
-                # Lê o arquivo com pandas
-                df = pd.read_csv(path, sep=delim, encoding=encoding)
-                logger.info(f"Arquivo CSV lido com sucesso usando pandas. Colunas: {list(df.columns)}")
+                # Cria uma view combinada se solicitado
+                if self.config.params.get('create_combined_view', True) and self.tables:
+                    try:
+                        # Seleciona o primeiro arquivo para obter o esquema
+                        first_table = next(iter(self.tables.values()))
+                        schema_query = f"SELECT * FROM {first_table} LIMIT 0"
+                        schema_df = self.connection.execute(schema_query).fetchdf()
+                        
+                        # Cria uma query UNION ALL para todas as tabelas
+                        union_parts = []
+                        for table_name in self.tables.values():
+                            # Verifica se a tabela tem as mesmas colunas
+                            try:
+                                columns_query = f"SELECT * FROM {table_name} LIMIT 0"
+                                table_columns = self.connection.execute(columns_query).fetchdf().columns
+                                
+                                # Adiciona apenas tabelas com estrutura compatível
+                                if set(schema_df.columns) == set(table_columns):
+                                    union_parts.append(f"SELECT * FROM {table_name}")
+                                else:
+                                    logger.warning(f"Tabela {table_name} ignorada na visão combinada devido a diferenças de esquema")
+                            except:
+                                logger.warning(f"Erro ao verificar esquema da tabela {table_name}")
+                        
+                        if union_parts:
+                            # Cria a visão combinada
+                            combined_query = f"CREATE VIEW {self.table_name} AS {' UNION ALL '.join(union_parts)}"
+                            self.connection.execute(combined_query)
+                            logger.info(f"Visão combinada criada: {self.table_name}")
+                        
+                    except Exception as e:
+                        logger.warning(f"Não foi possível criar a visão combinada: {str(e)}")
                 
-                # Aplica transformações baseadas em metadados
-                df = self._apply_metadata_transformations(df)
+            else:
+                # Comportamento original para um único arquivo
+                if not os.path.exists(path):
+                    # Tenta encontrar o arquivo no diretório atual
+                    current_dir = os.getcwd()
+                    base_filename = os.path.basename(path)
+                    alternative_path = os.path.join(current_dir, base_filename)
+                    
+                    if os.path.exists(alternative_path):
+                        logger.info(f"Arquivo não encontrado em {path}, usando alternativa: {alternative_path}")
+                        path = alternative_path
+                    else:
+                        logger.warning(f"Arquivo CSV não encontrado: {path}")
+                        return
                 
-                # Cria mapeamento de alias para colunas reais
-                self._create_column_mapping(df.columns)
+                logger.info(f"Conectando ao CSV via DuckDB: {path}")
                 
-                # Registra o DataFrame no DuckDB
-                self.connection.register(self.table_name, df)
-                logger.info(f"DataFrame registrado no DuckDB como tabela: {self.table_name}")
+                # Determina os parâmetros
+                delim = self.config.params.get('delim', 
+                        self.config.params.get('sep', 
+                        self.config.params.get('delimiter', ',')))
                 
-            except Exception as pandas_error:
-                logger.warning(f"Falha ao ler com pandas: {str(pandas_error)}. Tentando diretamente com DuckDB.")
+                has_header = self.config.params.get('header', True)
+                auto_detect = self.config.params.get('auto_detect', True)
                 
-                # Tenta usar o DuckDB diretamente
-                try:
-                    if self.connection is None:
-                        self.connection = duckdb.connect(database=':memory:')
-                    
-                    # Correto: DuckDB usa 'delim' em vez de 'delimiter'
-                    query_parts = [f"CREATE VIEW {self.table_name} AS SELECT * FROM read_csv('{path}'"]
-                    params = []
-                    
-                    # Adiciona parâmetros na sintaxe correta do DuckDB
-                    if 'delim' in self.config.params:
-                        params.append(f"delim='{self.config.params['delim']}'")
-                    elif 'delimiter' in self.config.params:
-                        params.append(f"delim='{self.config.params['delimiter']}'")
-                    elif 'sep' in self.config.params:
-                        params.append(f"delim='{self.config.params['sep']}'")
-                    
-                    if 'header' in self.config.params:
-                        params.append(f"header={str(self.config.params['header']).lower()}")
-                    
-                    if 'auto_detect' in self.config.params:
-                        params.append(f"auto_detect={str(self.config.params['auto_detect']).lower()}")
-                    
-                    if params:
-                        query_parts.append(", " + ", ".join(params))
-                    
-                    query_parts.append(")")
-                    query = "".join(query_parts)
-                    
-                    logger.info(f"Query para criação da view DuckDB: {query}")
-                    self.connection.execute(query)
-                    
-                    # Obtém as colunas para mapeamento
-                    columns_df = self.connection.execute(f"SELECT * FROM {self.table_name} LIMIT 0").fetchdf()
-                    self._create_column_mapping(columns_df.columns)
-                    
-                except Exception as duckdb_error:
-                    logger.error(f"Erro ao ler com DuckDB: {str(duckdb_error)}")
-                    
-                    # Última tentativa - criar uma tabela vazia
-                    logger.warning("Criando tabela vazia como fallback")
-                    if self.connection is None:
-                        self.connection = duckdb.connect(database=':memory:')
-                    
-                    empty_df = pd.DataFrame()
-                    self.connection.register(self.table_name, empty_df)
+                # Constrói a query para criar a view
+                query_parts = [f"CREATE VIEW {self.table_name} AS SELECT * FROM read_csv('{path}'"]
+                params = []
+                
+                params.append(f"delim='{delim}'")
+                params.append(f"header={str(has_header).lower()}")
+                params.append(f"auto_detect={str(auto_detect).lower()}")
+                
+                if params:
+                    query_parts.append(", " + ", ".join(params))
+                
+                query_parts.append(")")
+                create_query = "".join(query_parts)
+                
+                logger.info(f"Query para criação da view DuckDB: {create_query}")
+                self.connection.execute(create_query)
+                
+                # Registra o nome da tabela
+                self.tables[os.path.basename(path)] = self.table_name
             
-            # Verifica a estrutura da tabela registrada
-            self._log_table_schema()
+            # Obtém as colunas para mapeamento
+            self._create_column_mapping()
+            
+            # Verifica a estrutura das tabelas registradas
+            self._log_tables_schema()
             
         except ImportError:
             error_msg = "Módulo duckdb não encontrado. Instale com: pip install duckdb"
@@ -715,121 +906,76 @@ class DuckDBCsvConnector(DataConnector):
             logger.error(error_msg)
             raise DataConnectionException(error_msg) from e
     
-    def _apply_metadata_transformations(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Aplica transformações baseadas em metadados ao DataFrame.
-        
-        Args:
-            df: DataFrame original.
-            
-        Returns:
-            pd.DataFrame: DataFrame transformado.
-        """
-        if not hasattr(self.config, 'metadata') or not self.config.metadata:
-            return df
-        
-        result = df.copy()
-        metadata = self.config.metadata
-        
-        # Aplica conversões de tipo para cada coluna com metadados
-        for column_name, column_metadata in metadata.columns.items():
-            if column_name in result.columns and column_metadata.data_type:
-                try:
-                    # Conversão baseada no tipo definido nos metadados
-                    if column_metadata.data_type == 'int':
-                        result[column_name] = pd.to_numeric(result[column_name], errors='coerce').astype('Int64')
-                        logger.info(f"Coluna {column_name} convertida para inteiro")
-                        
-                    elif column_metadata.data_type == 'float':
-                        result[column_name] = pd.to_numeric(result[column_name], errors='coerce')
-                        logger.info(f"Coluna {column_name} convertida para float")
-                        
-                    elif column_metadata.data_type == 'date':
-                        format_str = column_metadata.format
-                        result[column_name] = pd.to_datetime(result[column_name], format=format_str, errors='coerce')
-                        logger.info(f"Coluna {column_name} convertida para data")
-                        
-                    elif column_metadata.data_type == 'bool':
-                        # Trata valores booleanos representados como strings
-                        true_values = ['true', 'yes', 'y', '1', 'sim', 's']
-                        false_values = ['false', 'no', 'n', '0', 'não', 'nao']
-                        
-                        def to_bool(x):
-                            if isinstance(x, str):
-                                x = x.lower()
-                                if x in true_values:
-                                    return True
-                                if x in false_values:
-                                    return False
-                            return x
-                        
-                        result[column_name] = result[column_name].apply(to_bool)
-                        logger.info(f"Coluna {column_name} convertida para booleano")
-                        
-                except Exception as e:
-                    logger.warning(f"Erro ao converter coluna {column_name}: {str(e)}")
-        
-        return result
-    
-    def _create_column_mapping(self, columns) -> None:
+    def _create_column_mapping(self) -> None:
         """
         Cria um mapeamento entre aliases e nomes reais de colunas.
-        
-        Args:
-            columns: Lista de nomes de colunas.
         """
         self.column_mapping = {}
         
-        # Se temos metadados de colunas, usamos os aliases definidos
-        if hasattr(self.config, 'metadata') and self.config.metadata:
-            for col_name, metadata in self.config.metadata.columns.items():
-                if col_name in columns:
-                    for alias in metadata.alias:
-                        self.column_mapping[alias.lower()] = col_name
-            
-            logger.info(f"Mapeamento de colunas criado a partir de metadados: {self.column_mapping}")
-        else:
-            # Caso contrário, usamos a abordagem heurística
-            lower_cols = [col.lower() for col in columns]
-            
-            # Mapeia nomes genéricos para colunas reais
-            generic_mappings = {
-                'date': ['date', 'data', 'dt', 'dia', 'mes', 'ano', 'data_venda', 'data_compra'],
-                'revenue': ['revenue', 'receita', 'valor', 'venda', 'montante', 'faturamento'],
-                'profit': ['profit', 'lucro', 'margem', 'ganho', 'resultado'],
-                'quantity': ['quantity', 'quantidade', 'qtde', 'qtd', 'volume', 'unidades'],
-                'id': ['id', 'codigo', 'code', 'identificador', 'chave'],
-                'product': ['product', 'produto', 'item', 'mercadoria'],
-                'customer': ['customer', 'cliente', 'comprador', 'consumidor']
-            }
-            
-            # Cria o mapeamento
-            for generic, options in generic_mappings.items():
-                for option in options:
-                    for i, col_lower in enumerate(lower_cols):
-                        if option in col_lower:
-                            self.column_mapping[generic] = columns[i]
-                            break
-                    if generic in self.column_mapping:
-                        break
-            
-            logger.info(f"Mapeamento de colunas criado por heurística: {self.column_mapping}")
-    
-    def _log_table_schema(self) -> None:
-        """
-        Registra informações sobre o esquema da tabela para debug.
-        """
+        # Se não houver tabelas registradas, não há o que mapear
+        if not self.tables:
+            return
+        
+        # Usa a primeira tabela para obter as colunas
         try:
-            schema_info = self.connection.execute(f"DESCRIBE {self.table_name}").fetchdf()
-            logger.info(f"Esquema da tabela {self.table_name}:")
-            for _, row in schema_info.iterrows():
-                logger.info(f"  {row['column_name']} - {row['column_type']}")
+            first_table = next(iter(self.tables.values()))
+            query = f"SELECT * FROM {first_table} LIMIT 0"
+            columns_df = self.connection.execute(query).fetchdf()
+            columns = columns_df.columns
+            
+            # Se temos metadados de colunas, usamos os aliases definidos
+            if hasattr(self.config, 'metadata') and self.config.metadata:
+                for col_name, metadata in self.config.metadata.columns.items():
+                    if col_name in columns:
+                        for alias in metadata.alias:
+                            self.column_mapping[alias.lower()] = col_name
+                
+                logger.info(f"Mapeamento de colunas criado a partir de metadados: {self.column_mapping}")
+            else:
+                # Caso contrário, usamos a abordagem heurística
+                lower_cols = [col.lower() for col in columns]
+                
+                # Mapeia nomes genéricos para colunas reais
+                generic_mappings = {
+                    'date': ['date', 'data', 'dt', 'dia', 'mes', 'ano', 'data_venda', 'data_compra'],
+                    'revenue': ['revenue', 'receita', 'valor', 'venda', 'montante', 'faturamento'],
+                    'profit': ['profit', 'lucro', 'margem', 'ganho', 'resultado'],
+                    'quantity': ['quantity', 'quantidade', 'qtde', 'qtd', 'volume', 'unidades'],
+                    'id': ['id', 'codigo', 'code', 'identificador', 'chave'],
+                    'product': ['product', 'produto', 'item', 'mercadoria'],
+                    'customer': ['customer', 'cliente', 'comprador', 'consumidor']
+                }
+                
+                # Cria o mapeamento
+                for generic, options in generic_mappings.items():
+                    for option in options:
+                        for i, col_lower in enumerate(lower_cols):
+                            if option in col_lower:
+                                self.column_mapping[generic] = columns[i]
+                                break
+                        if generic in self.column_mapping:
+                            break
+                
+                logger.info(f"Mapeamento de colunas criado por heurística: {self.column_mapping}")
         except Exception as e:
-            logger.warning(f"Não foi possível obter o esquema: {str(e)}")
+            logger.warning(f"Não foi possível criar o mapeamento de colunas: {str(e)}")
+    
+    def _log_tables_schema(self) -> None:
+        """
+        Registra informações sobre o esquema das tabelas para debug.
+        """
+        for file_name, table_name in self.tables.items():
+            try:
+                schema_info = self.connection.execute(f"DESCRIBE {table_name}").fetchdf()
+                logger.info(f"Esquema da tabela {table_name} ({file_name}):")
+                for _, row in schema_info.iterrows():
+                    logger.info(f"  {row['column_name']} - {row['column_type']}")
+            except Exception as e:
+                logger.warning(f"Não foi possível obter o esquema da tabela {table_name}: {str(e)}")
     
     def read_data(self, query: Optional[str] = None) -> pd.DataFrame:
         """
-        Lê dados do CSV, opcionalmente aplicando uma consulta SQL.
+        Lê dados do CSV ou diretório de CSVs, opcionalmente aplicando uma consulta SQL.
         
         Args:
             query: Consulta SQL opcional.
@@ -841,14 +987,30 @@ class DuckDBCsvConnector(DataConnector):
             raise DataConnectionException("Não conectado à fonte de dados. Chame connect() primeiro.")
             
         try:
-            # Se não houver query específica, seleciona todos os dados
+            # Se não houver query específica, seleciona todos os dados da tabela principal
             if not query:
-                query = f"SELECT * FROM {self.table_name}"
-            else:
-                # Adapta a query usando metadados e substitui referências à tabela
-                query = self._adapt_query_with_metadata(query)
-                query = query.replace("FROM csv", f"FROM {self.table_name}")
+                if self.is_directory and self.config.params.get('return_dict', False):
+                    # Retorna um dicionário de DataFrames para cada arquivo
+                    result = {}
+                    for file_name, table_name in self.tables.items():
+                        try:
+                            df = self.connection.execute(f"SELECT * FROM {table_name}").fetchdf()
+                            result[file_name] = df
+                        except Exception as e:
+                            logger.warning(f"Erro ao ler tabela {table_name}: {str(e)}")
+                    return result
                 
+                # Usa a tabela combinada ou a única tabela disponível
+                table_to_query = self.table_name if self.table_name in self._get_all_tables() else next(iter(self.tables.values()), None)
+                
+                if table_to_query:
+                    query = f"SELECT * FROM {table_to_query}"
+                else:
+                    return pd.DataFrame()
+            else:
+                # Adapta a query usando metadados e substituições de tabela
+                query = self._adapt_query(query)
+            
             logger.info(f"Executando query: {query}")
             
             # Executa a query
@@ -856,13 +1018,18 @@ class DuckDBCsvConnector(DataConnector):
                 result = self.connection.execute(query).fetchdf()
                 return result
             except Exception as query_error:
-                logger.warning(f"Erro na query: {str(query_error)}. Tentando query simplificada.")
+                logger.warning(f"Erro na query: {str(query_error)}. Mostrando tabelas disponíveis.")
                 
-                # Tenta uma query mais simples
-                fallback_query = f"SELECT * FROM {self.table_name} LIMIT 100"
-                return self.connection.execute(fallback_query).fetchdf()
+                # Lista as tabelas disponíveis para ajudar o usuário
+                available_tables = self._get_all_tables()
+                error_msg = (f"Erro ao executar query: {str(query_error)}. "
+                            f"Tabelas disponíveis: {', '.join(available_tables)}")
+                raise DataReadException(error_msg) from query_error
             
         except Exception as e:
+            if isinstance(e, DataReadException):
+                raise e
+            
             error_msg = f"Erro ao ler dados do CSV via DuckDB: {str(e)}"
             logger.error(error_msg)
             
@@ -872,6 +1039,22 @@ class DuckDBCsvConnector(DataConnector):
             except:
                 raise DataReadException(error_msg) from e
     
+    def _get_all_tables(self) -> List[str]:
+        """
+        Retorna todas as tabelas e views disponíveis no DuckDB.
+        
+        Returns:
+            List[str]: Lista de nomes de tabelas/views
+        """
+        try:
+            tables_df = self.connection.execute("SHOW TABLES").fetchdf()
+            if 'name' in tables_df.columns:
+                return tables_df['name'].tolist()
+            return []
+        except Exception as e:
+            logger.warning(f"Erro ao listar tabelas: {str(e)}")
+            return list(self.tables.values())
+
     def _adapt_query_with_metadata(self, query: str) -> str:
         """
         Adapta uma consulta SQL usando informações de metadados.

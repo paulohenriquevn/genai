@@ -3,14 +3,14 @@
     {
       "id": "sales_data",
       "type": "csv",
-      "path": "vendas_perdidas.csv",
+      "path": "dados",
       "delimiter": ",",
       "encoding": "utf-8"
     },
     {
       "id": "large_sales",
       "type": "duckdb_csv",
-      "path": "vendas_perdidas.csv",
+      "path": "dados",
       "delimiter": ",",
       "auto_detect": true
     }
