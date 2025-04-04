@@ -1,113 +1,135 @@
 # Sistema de Consulta em Linguagem Natural
 
-Este projeto implementa um sistema completo para análise de dados utilizando consultas em linguagem natural. O sistema permite que usuários sem conhecimentos técnicos em programação ou SQL possam realizar análises de dados complexas através de perguntas em português.
-
 ## Visão Geral
 
-O sistema integra vários componentes para criar uma solução completa:
+O Sistema de Consulta em Linguagem Natural é uma solução avançada que permite a análise de dados através de consultas em linguagem natural, eliminando a necessidade de conhecimentos técnicos em SQL ou programação.
 
-1. **Conectores de Dados** - Para carregar e processar dados de diferentes fontes
-2. **Motor de Consulta** - Para processamento de consultas em linguagem natural
-3. **Modelos de Linguagem** - Para gerar código Python/SQL a partir de consultas
-4. **Execução Segura** - Para executar código gerado de forma segura e controlada
-5. **API REST** - Para acesso remoto e integração com outras aplicações
+### Principais Características
 
-O fluxo de trabalho é:
-1. O usuário faz uma pergunta sobre os dados em linguagem natural
-2. O sistema utiliza modelos de IA para converter a pergunta em código Python/SQL
-3. O código é executado de forma segura
-4. Os resultados são processados e retornados no formato apropriado (texto, número, tabela, gráfico)
-5. Se houver erros, o sistema tenta corrigi-los automaticamente
+- **Processamento de Linguagem Natural**: Converte consultas em linguagem natural em código Python/SQL executável
+- **Suporte a Múltiplas Fontes de Dados**: Integração com CSV, bancos de dados, e outras fontes
+- **Visualizações Automáticas**: Geração de gráficos e visualizações de dados
+- **Integração com Modelos de IA**: Utiliza modelos de linguagem para geração de código
+- **API REST**: Interface para integração com outras aplicações
 
-## Requisitos
+## Arquitetura do Sistema
 
-- Python 3.7 ou superior
-- Dependências principais (veja em `requirements.txt`):
-  - pandas
-  - matplotlib
-  - duckdb
-  - numpy
-  - fastapi
-  - uvicorn
-  - (opcional) openai, anthropic ou huggingface para integração com modelos de IA avançados
+O sistema é composto por vários componentes modulares:
+
+### 1. Conectores de Dados (`connector/`)
+- Suporta diferentes fontes de dados
+- Implementa camada semântica para interpretação de dados
+- Tipos de conectores:
+  - CSV
+  - PostgreSQL
+  - DuckDB
+  - Outros bancos de dados
+
+### 2. Motor de Consulta (`natural_query_engine.py`)
+- Processamento central de consultas
+- Gerenciamento de estado e memória
+- Execução segura de código
+- Geração de respostas
+
+### 3. Integração com Modelos de Linguagem (`llm_integration.py`)
+- Suporte a múltiplos modelos de IA:
+  - OpenAI (GPT)
+  - Anthropic (Claude)
+  - Hugging Face
+  - Modelos locais
+
+### 4. Construção de Queries (`query_builders/`)
+- Geração dinâmica de consultas SQL
+- Transformações semânticas
+- Otimização de queries
+
+### 5. API REST (`api.py`)
+- Endpoints para consultas
+- Upload de dados
+- Gestão de fontes de dados
 
 ## Instalação
 
+### Pré-requisitos
+- Python 3.7+
+- Dependências listadas em `requirements.txt`
+
+### Passos de Instalação
+
+1. Clone o repositório
 ```bash
-# Clone o repositório
 git clone https://github.com/seu-usuario/sistema-consulta-linguagem-natural.git
 cd sistema-consulta-linguagem-natural
+```
 
-# Instale as dependências
+2. Crie um ambiente virtual
+```bash
+python -m venv venv
+source venv/bin/activate  # No Windows use `venv\Scripts\activate`
+```
+
+3. Instale as dependências
+```bash
 pip install -r requirements.txt
-
-# Para usar modelos de IA avançados (opcional)
-pip install openai anthropic huggingface_hub
 ```
 
-## Estrutura do Projeto
+## Configuração
 
-```
-sistema-consulta-linguagem-natural/
-├── connector/            # Conectores para diferentes fontes de dados
-├── core/                 # Módulos core para execução, estado e respostas
-├── query_builders/       # Construtores de consultas SQL otimizadas
-├── utils/                # Utilitários para análise de datasets
-├── dados/                # Arquivos de dados de exemplo
-├── natural_query_engine.py  # Motor de consulta em linguagem natural
-├── llm_integration.py    # Integração com modelos de linguagem
-├── api_service.py        # API REST para acesso remoto
-├── integrated_system.py  # Sistema integrado completo
-├── example_usage.py      # Exemplos de uso
-├── requirements.txt      # Dependências do projeto
-└── README.md             # Este arquivo
+### Configuração de Fontes de Dados
+
+Crie um arquivo `datasources.json`:
+
+```json
+{
+  "data_sources": [
+    {
+      "id": "vendas",
+      "type": "csv",
+      "path": "dados/vendas.csv",
+      "delimiter": ",",
+      "encoding": "utf-8"
+    }
+  ]
+}
 ```
 
-## Uso Básico
+### Configuração de Modelos de Linguagem
+
+Configure em `llm_config.json` ou através de variáveis de ambiente:
+
+```json
+{
+  "model_type": "openai",
+  "model_name": "gpt-3.5-turbo",
+  "api_key": "sua_chave_api"
+}
+```
+
+## Uso
 
 ### Interface de Linha de Comando
 
 ```bash
-# Inicia a interface interativa
+# Inicia o sistema
 python integrated_system.py
 
 # Executa uma consulta específica
 python integrated_system.py --query "Qual é o total de vendas por cliente?"
-
-# Inicia apenas o servidor API
-python integrated_system.py --api
 ```
 
-### Uso como Biblioteca
+### Exemplo de Código Python
 
 ```python
 from integrated_system import NaturalLanguageAnalyticSystem
 
 # Inicializa o sistema
-system = NaturalLanguageAnalyticSystem(
-    data_dir="caminho/para/dados",
-    output_dir="caminho/para/saida"
-)
-
-# Carrega dados adicionais
-system.load_data_from_file("caminho/para/arquivo.csv", "nome_da_fonte")
+system = NaturalLanguageAnalyticSystem()
 
 # Processa uma consulta
-result, result_type = system.process_query("Qual é o total de vendas por cliente?")
+resultado, tipo = system.process_query("Mostre o total de vendas por cidade")
 
-# Usa o resultado de acordo com o tipo
-if result_type == "dataframe":
-    print(result)  # DataFrame pandas
-elif result_type == "plot":
-    # Exibe ou salva o gráfico
-    viz_path = "grafico.png"
-    import base64, io
-    from PIL import Image
-    img_data = result.split(",")[1]
-    img = Image.open(io.BytesIO(base64.b64decode(img_data)))
-    img.save(viz_path)
-else:
-    print(result)  # Texto ou número
+# Exibe o resultado
+print(resultado)
 ```
 
 ### API REST
@@ -117,110 +139,71 @@ else:
 python integrated_system.py --api
 ```
 
-Acesse a documentação interativa em http://localhost:8000/docs para explorar todos os endpoints disponíveis:
+Acesse a documentação em `http://localhost:8000/docs`
 
-- `POST /query`: Processa uma consulta em linguagem natural
-- `GET /datasources`: Lista as fontes de dados disponíveis
-- `GET /stats`: Retorna estatísticas de uso do sistema
-- `POST /upload_data`: Faz upload de um arquivo de dados
-- `POST /execute_sql`: Executa uma consulta SQL diretamente
+## Tipos de Consultas Suportadas
+
+- Consultas básicas (`SELECT`)
+- Agregações (`SUM`, `AVG`, `COUNT`)
+- Agrupamentos (`GROUP BY`)
+- Visualizações (gráficos de barras, linhas, etc.)
+- Análises temporais
+- Junções entre tabelas
 
 ## Exemplos de Consultas
 
-O sistema suporta diversos tipos de consultas, como:
+- "Quantos clientes temos por cidade?"
+- "Mostre o total de vendas por mês"
+- "Crie um gráfico de barras com vendas por cliente"
+- "Qual é o impacto financeiro das vendas perdidas?"
 
-- **Consultas básicas**: "Quais são os primeiros 5 registros da tabela de clientes?"
-- **Agregações**: "Qual é o valor total de vendas?"
-- **Agrupamentos**: "Mostre o total de vendas por cliente"
-- **Visualizações**: "Crie um gráfico de barras das vendas por mês"
-- **Combinações**: "Qual cliente teve o maior valor de compra e de qual cidade ele é?"
-- **Análises temporais**: "Como as vendas evoluíram ao longo do tempo?"
-- **Análises por categoria**: "Qual o impacto financeiro por motivo de venda perdida?"
+## Testes
 
-## Configuração
-
-O sistema pode ser configurado através de arquivos JSON:
-
-- `config.json`: Configuração geral do sistema
-- `datasources.json`: Configuração de fontes de dados
-- `metadata.json`: Metadados para enriquecer a análise
-- `llm_config.json`: Configuração para modelos de linguagem
-
-### Exemplo de `config.json`
-
-```json
-{
-  "data_sources": {
-    "files": [
-      {"name": "vendas", "path": "dados/vendas.csv", "type": "csv"},
-      {"name": "clientes", "path": "dados/clientes.csv", "type": "csv"}
-    ],
-    "connections": [
-      {
-        "name": "postgres_db",
-        "type": "postgres",
-        "host": "localhost",
-        "database": "mydatabase",
-        "username": "user",
-        "password": "pass"
-      }
-    ]
-  },
-  "output_types": ["string", "number", "dataframe", "plot"],
-  "api": {
-    "enabled": true,
-    "host": "0.0.0.0",
-    "port": 8000
-  }
-}
-```
-
-## Integração com Modelos de Linguagem
-
-Por padrão, o sistema usa uma implementação simulada para gerar código Python/SQL. Para usar modelos de IA avançados, configure o arquivo `llm_config.json`:
-
-```json
-{
-  "model_type": "openai",
-  "model_name": "gpt-3.5-turbo",
-  "api_key": "sua-chave-api"
-}
-```
-
-Ou defina variáveis de ambiente:
+Execute os testes usando:
 
 ```bash
-export LLM_MODEL_TYPE=openai
-export LLM_MODEL_NAME=gpt-3.5-turbo
-export LLM_API_KEY=sua-chave-api
+python -m testes.run_all_tests --all
 ```
 
-Modelos suportados:
-- OpenAI (GPT-3.5, GPT-4)
-- Anthropic (Claude)
-- Hugging Face (diversos modelos)
-- Modelos locais (via llama-cpp-python ou gpt4all)
+## Segurança
 
-## Extensão
+- Execução de código em ambiente isolado
+- Sanitização de queries
+- Tratamento de erros
+- Prevenção de injeção de código
 
-O sistema foi projetado para ser extensível:
+## Extensibilidade
 
-1. **Novos Conectores**: Adicione conectores para outras fontes de dados
-2. **Novos Tipos de Saída**: Adicione formatos de saída personalizados
-3. **Novos Modelos de IA**: Integre com outros modelos de linguagem
-4. **Transformações de Dados**: Adicione transformações personalizadas
+- Adicione novos conectores de dados
+- Integre novos modelos de linguagem
+- Personalize transformações de dados
 
-## Limitações Conhecidas
+## Limitações
 
-- O sistema funciona melhor com conjuntos de dados estruturados e bem formatados
-- A qualidade da análise depende do modelo de linguagem utilizado
-- Consultas muito complexas podem exigir várias interações ou refinamentos
-- As visualizações estão limitadas às capacidades do matplotlib
+- Desempenho depende do modelo de linguagem
+- Consultas muito complexas podem exigir ajustes
+- Qualidade das respostas varia com a qualidade dos dados
 
-## Licença
+## Contribuição
 
-Este projeto está licenciado sob a licença MIT - veja o arquivo LICENSE para detalhes.
+1. Faça um fork do repositório
+2. Crie uma branch para sua feature
+3. Commit suas mudanças
+4. Crie um Pull Request
 
-## Contribuições
+## Suporte
 
-Contribuições são bem-vindas! Por favor, abra um issue para discutir alterações significativas antes de enviar um pull request.
+- Abra issues no GitHub
+- Consulte a documentação
+- Entre em contato com o mantenedor
+
+## Próximos Passos
+
+- Melhorar a precisão dos modelos de linguagem
+- Adicionar mais tipos de visualizações
+- Expandir suporte a fontes de dados
+- Implementar cache de consultas
+
+---
+
+**Desenvolvido com ❤️ por [Paulo Henrique Vieira]**
