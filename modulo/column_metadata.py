@@ -111,7 +111,6 @@ class ColumnMetadata:
             
         return result
 
-
 class DatasetMetadata:
     """
     Armazena metadados para um dataset completo.
@@ -377,7 +376,6 @@ class DatasetMetadata:
         
         return None
 
-
 class MetadataRegistry:
     """
     Registro global de metadados para datasets.
@@ -476,61 +474,3 @@ class MetadataRegistry:
         """Remove todos os metadados registrados."""
         self._datasets.clear()
         logger.info("Registro de metadados limpo")
-
-
-# Exemplo de uso
-if __name__ == "__main__":
-    # Criação de metadados para uma coluna
-    revenue_metadata = ColumnMetadata(
-        name="revenue",
-        description="Valor da venda em reais",
-        data_type="float",
-        format="currency",
-        alias=["receita", "valor", "montante"],
-        aggregations=["sum", "avg", "min", "max"],
-        validation={"min": 0},
-        display={"precision": 2, "unit": "R$"},
-        tags=["financial", "kpi"]
-    )
-    
-    date_metadata = ColumnMetadata(
-        name="date",
-        description="Data da venda",
-        data_type="date",
-        format="YYYY-MM-DD",
-        alias=["data", "dt", "data_venda"],
-        tags=["time", "dimension"]
-    )
-    
-    # Criação de metadados para um dataset
-    sales_metadata = DatasetMetadata(
-        name="sales_data",
-        description="Dados de vendas mensais",
-        source="Sistema ERP",
-        columns={
-            "revenue": revenue_metadata,
-            "date": date_metadata
-        },
-        version="1.0",
-        tags=["sales", "financial"]
-    )
-    
-    # Registra os metadados
-    registry = MetadataRegistry()
-    registry.register_metadata(sales_metadata)
-    
-    # Uso dos metadados
-    metadata = registry.get_metadata("sales_data")
-    if metadata:
-        print(f"Dataset: {metadata.name}")
-        print(f"Descrição: {metadata.description}")
-        
-        # Resolução de alias
-        real_name = metadata.resolve_column_name("receita")
-        print(f"Nome real para 'receita': {real_name}")
-        
-        # Obtenção de metadados de coluna
-        revenue_meta = metadata.get_column_metadata("revenue")
-        if revenue_meta:
-            print(f"Tipo de dados para revenue: {revenue_meta.data_type}")
-            print(f"Agregações recomendadas: {revenue_meta.aggregations}")

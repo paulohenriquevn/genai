@@ -13,14 +13,26 @@ from typing import Dict, List, Any, Optional
 import logging
 import matplotlib.pyplot as plt
 
-# Importa o módulo de conectores
+# Importa o módulo de conectores padrão
 from connectors import (
     DataConnector, 
-    DataConnectorFactory, 
     DataSourceConfig,
     DataConnectionException, 
     DataReadException,
     DuckDBCsvConnector
+)
+
+# Importa o módulo de metadados e conectores com suporte a metadados
+from metadata_connectors import (
+    MetadataEnabledDataConnectorFactory,
+    MetadataEnabledDataSourceConfig,
+    MetadataRegistry
+)
+
+# Importa o módulo de metadados
+from column_metadata import (
+    DatasetMetadata,
+    ColumnMetadata
 )
 
 # Configuração de logging
@@ -40,15 +52,27 @@ class DataAnalyzer:
     Implementa tratamento robusto de erros.
     """
     
-    def __init__(self, config_file: str):
+    def __init__(self, config_file: str, metadata_file: str = None):
         """
         Inicializa o analisador de dados.
         
         Args:
             config_file: Caminho para o arquivo de configuração JSON.
+            metadata_file: Caminho para o arquivo de metadados JSON.
         """
         self.config_file = config_file
+        self.metadata_file = metadata_file
         self.connectors: Dict[str, DataConnector] = {}
+        self.metadata_registry = MetadataRegistry()
+        
+        # Carrega metadados se disponíveis
+        if metadata_file and os.path.exists(metadata_file):
+            try:
+                self.metadata_registry.register_from_file(metadata_file)
+                logger.info(f"Metadados carregados do arquivo: {metadata_file}")
+            except Exception as e:
+                logger.error(f"Erro ao carregar metadados: {str(e)}")
+        
         self.load_connectors()
     
     def load_connectors(self) -> None:
@@ -75,14 +99,34 @@ class DataAnalyzer:
             with open(self.config_file, "r") as f:
                 config_json = f.read()
             
-            self.connectors = DataConnectorFactory.create_from_json(config_json)
-            logger.info(f"Carregados {len(self.connectors)} conectores")
+            # Modifica o JSON para incluir referências aos metadados
+            if self.metadata_file and os.path.exists(self.metadata_file):
+                try:
+                    config_data = json.loads(config_json)
+                    
+                    # Adiciona o caminho do arquivo de metadados à configuração
+                    if "metadata" not in config_data:
+                        config_data["metadata"] = {"files": [self.metadata_file]}
+                    elif "files" not in config_data["metadata"]:
+                        config_data["metadata"]["files"] = [self.metadata_file]
+                    elif self.metadata_file not in config_data["metadata"]["files"]:
+                        config_data["metadata"]["files"].append(self.metadata_file)
+                    
+                    # Atualiza o JSON de configuração
+                    config_json = json.dumps(config_data)
+                    logger.info(f"Configuração atualizada com referência a metadados: {self.metadata_file}")
+                except Exception as e:
+                    logger.error(f"Erro ao modificar configuração com metadados: {str(e)}")
+            
+            # Utiliza a factory com suporte a metadados
+            self.connectors = MetadataEnabledDataConnectorFactory.create_from_json(config_json)
+            logger.info(f"Carregados {len(self.connectors)} conectores com suporte a metadados")
             
         except Exception as e:
             logger.error(f"Erro ao carregar conectores: {str(e)}")
             # Cria um conector padrão para não quebrar o fluxo
-            config = DataSourceConfig("default", "csv", path="dados.csv")
-            self.connectors = {"default": DataConnectorFactory.create_connector(config)}
+            config = MetadataEnabledDataSourceConfig("default", "csv", path="dados.csv")
+            self.connectors = {"default": MetadataEnabledDataConnectorFactory.create_connector(config)}
     
     def get_available_sources(self) -> List[str]:
         """
@@ -164,6 +208,27 @@ class DataAnalyzer:
                 "id_columns": id_cols
             })
             
+            # Adiciona informações de metadados, se disponíveis
+            if hasattr(connector, 'config') and hasattr(connector.config, 'metadata') and connector.config.metadata:
+                metadata = connector.config.metadata
+                meta_info = {
+                    "dataset_name": metadata.name,
+                    "dataset_description": metadata.description,
+                    "columns_metadata": {}
+                }
+                
+                for col_name, col_meta in metadata.columns.items():
+                    meta_info["columns_metadata"][col_name] = {
+                        "description": col_meta.description,
+                        "data_type": col_meta.data_type,
+                        "format": col_meta.format,
+                        "alias": col_meta.alias,
+                        "aggregations": col_meta.aggregations,
+                        "tags": col_meta.tags
+                    }
+                
+                result["metadata"] = meta_info
+            
             return result
             
         except Exception as e:
@@ -228,11 +293,36 @@ class DataAnalyzer:
             stats["top_values"] = top_values
             
             # Contagem total de registros
-            if hasattr(connector, 'get_row_count'):
-                stats["total_rows"] = connector.get_row_count()
+            if hasattr(connector, 'count_rows'):
+                stats["total_rows"] = connector.count_rows()
             else:
                 # Estima o total
                 stats["total_rows_estimate"] = "1000+ (amostra limitada)"
+            
+            # Adiciona informações específicas baseadas em metadados
+            if hasattr(connector, 'config') and hasattr(connector.config, 'metadata') and connector.config.metadata:
+                metadata = connector.config.metadata
+                meta_stats = {"column_recommended_aggregations": {}}
+                
+                # Para cada coluna numérica, verifica agregações recomendadas
+                for col in numeric_cols:
+                    col_meta = metadata.get_column_metadata(col)
+                    if col_meta and col_meta.aggregations:
+                        # Calcula agregações recomendadas
+                        agg_results = {}
+                        for agg in col_meta.aggregations:
+                            if agg == 'sum':
+                                agg_results['sum'] = float(df[col].sum())
+                            elif agg == 'avg' or agg == 'mean':
+                                agg_results['avg'] = float(df[col].mean())
+                            elif agg == 'min':
+                                agg_results['min'] = float(df[col].min())
+                            elif agg == 'max':
+                                agg_results['max'] = float(df[col].max())
+                        
+                        meta_stats["column_recommended_aggregations"][col] = agg_results
+                
+                stats["metadata_based"] = meta_stats
             
             return {
                 "summary": stats,
@@ -285,6 +375,26 @@ class DataAnalyzer:
             # Detecta colunas numéricas e categóricas
             numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
             cat_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+            
+            # Se temos metadados, podemos melhorar a detecção de colunas interessantes
+            if hasattr(connector, 'config') and hasattr(connector.config, 'metadata') and connector.config.metadata:
+                metadata = connector.config.metadata
+                
+                # Prioriza colunas com metadados financeiros ou KPIs para visualização
+                priority_cols = []
+                for col_name in numeric_cols:
+                    col_meta = metadata.get_column_metadata(col_name)
+                    if col_meta and col_meta.tags:
+                        if any(tag in ['financial', 'kpi', 'monetary', 'performance'] for tag in col_meta.tags):
+                            priority_cols.append(col_name)
+                
+                # Se encontrou colunas prioritárias, ajusta a lista de colunas numéricas
+                if priority_cols:
+                    # Coloca as colunas prioritárias no início da lista
+                    for col in priority_cols:
+                        if col in numeric_cols:
+                            numeric_cols.remove(col)
+                    numeric_cols = priority_cols + numeric_cols
             
             # 1. Histograma para cada coluna numérica
             for i, col in enumerate(numeric_cols[:5]):  # Limita a 5 colunas
@@ -352,6 +462,26 @@ class DataAnalyzer:
                     "file": file_path
                 })
             
+            # 4. Gráfico de barras para Motivo vs ImpactoFinanceiro se temos esses campos
+            if 'Motivo' in df.columns and 'ImpactoFinanceiro' in df.columns:
+                plt.figure(figsize=(12, 6))
+                df.groupby('Motivo')['ImpactoFinanceiro'].sum().sort_values(ascending=False).plot(kind='bar')
+                plt.title('Impacto Financeiro por Motivo de Perda')
+                plt.xlabel('Motivo')
+                plt.ylabel('Impacto Financeiro Total (R$)')
+                plt.xticks(rotation=45)
+                plt.grid(True, alpha=0.3)
+                
+                file_path = os.path.join(output_path, 'impacto_por_motivo.png')
+                plt.savefig(file_path)
+                plt.close()
+                
+                visualizations.append({
+                    "type": "barplot",
+                    "analysis": "Impacto Financeiro por Motivo",
+                    "file": file_path
+                })
+            
             return {
                 "visualizations": visualizations,
                 "output_directory": output_path
@@ -369,8 +499,8 @@ class DataAnalyzer:
 
 # Exemplo de uso
 if __name__ == "__main__":
-    # Configura o analisador
-    analyzer = DataAnalyzer("datasources.json")
+    # Configura o analisador com suporte a metadados
+    analyzer = DataAnalyzer("datasources.json", "metadata.json")
     
     # Lista as fontes disponíveis
     sources = analyzer.get_available_sources()
@@ -389,6 +519,15 @@ if __name__ == "__main__":
         print(f"Colunas detectadas: {structure['columns']}")
         print(f"Colunas numéricas: {structure.get('numeric_columns', [])}")
         
+        # Se temos metadados, exibe informações adicionais
+        if "metadata" in structure:
+            print("\nInformações de metadados:")
+            print(f"  Nome do dataset: {structure['metadata']['dataset_name']}")
+            print(f"  Descrição: {structure['metadata']['dataset_description']}")
+            print("  Metadados de colunas:")
+            for col, meta in structure['metadata']['columns_metadata'].items():
+                print(f"    {col}: {meta['description']} ({meta['data_type']})")
+        
         # Gera resumo estatístico
         summary = analyzer.generate_summary(source_id)
         if "error" in summary:
@@ -400,6 +539,12 @@ if __name__ == "__main__":
                     print(f"  Estatísticas numéricas:")
                     for col, stats in value.items():
                         print(f"    {col}: {stats}")
+                elif key == 'metadata_based' and isinstance(value, dict):
+                    print(f"  Estatísticas baseadas em metadados:")
+                    for agg_type, aggs in value.items():
+                        print(f"    {agg_type}:")
+                        for col, results in aggs.items():
+                            print(f"      {col}: {results}")
                 else:
                     print(f"  {key}: {value}")
         
@@ -410,6 +555,11 @@ if __name__ == "__main__":
         else:
             print("\nVisualizações criadas:")
             for viz in viz_result.get('visualizations', []):
-                print(f"  {viz['type']} para {viz.get('column', viz.get('columns', 'múltiplas colunas'))}")
+                if 'column' in viz:
+                    print(f"  {viz['type']} para {viz['column']}")
+                elif 'analysis' in viz:
+                    print(f"  {viz['type']} para {viz['analysis']}")
+                else:
+                    print(f"  {viz['type']} para {viz.get('columns', 'múltiplas colunas')}")
             
         print("\n" + "="*50)

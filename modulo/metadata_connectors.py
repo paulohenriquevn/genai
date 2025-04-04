@@ -178,115 +178,6 @@ class MetadataEnabledDataSourceConfig(DataSourceConfig):
         metadata = self.metadata.get_column_metadata(column_name)
         return metadata.format if metadata else None
 
-class MetadataEnabledDataConnectorFactory(DataConnectorFactory):
-    """
-    Factory de conectores com suporte a metadados.
-    
-    Estende a factory padrão para criar conectores que reconhecem e
-    utilizam metadados de colunas.
-    """
-    
-    @classmethod
-    def create_connector(cls, config: Union[Dict, DataSourceConfig, MetadataEnabledDataSourceConfig]) -> DataConnector:
-        """
-        Cria um conector com suporte a metadados.
-        
-        Args:
-            config: Configuração da fonte de dados.
-            
-        Returns:
-            DataConnector: Conector criado.
-        """
-        # Converte o config para MetadataEnabledDataSourceConfig se necessário
-        if isinstance(config, dict):
-            config = MetadataEnabledDataSourceConfig.from_dict(config)
-        elif isinstance(config, DataSourceConfig) and not isinstance(config, MetadataEnabledDataSourceConfig):
-            # Cria uma versão com metadados mantendo os parâmetros originais
-            config = MetadataEnabledDataSourceConfig(
-                config.source_id,
-                config.source_type,
-                metadata=None,
-                **config.params
-            )
-        
-        # Cria o conector apropriado com base no tipo
-        source_type = config.source_type
-        
-        if source_type not in cls._connectors:
-            raise ConfigurationException(f"Tipo de conector não suportado: {source_type}")
-            
-        connector_class = cls._connectors[source_type]
-        
-        # Se o conector é o CSV, cria uma versão com metadados
-        if source_type == 'csv' and connector_class == CsvConnector:
-            return MetadataEnabledCsvConnector(config)
-        
-        # Para outros conectores, usa a classe original
-        return connector_class(config)
-    
-    @classmethod
-    def create_from_json(cls, json_config: str) -> Dict[str, DataConnector]:
-        """
-        Cria múltiplos conectores a partir de uma configuração JSON.
-        
-        Args:
-            json_config: String JSON com configurações.
-            
-        Returns:
-            Dict[str, DataConnector]: Dicionário com conectores.
-        """
-        try:
-            config_data = json.loads(json_config)
-            
-            if 'data_sources' not in config_data:
-                raise ConfigurationException("Formato de configuração inválido. Esperava 'data_sources' como chave principal.")
-                
-            sources_data = config_data['data_sources']
-            
-            # Processa metadados globais se existirem
-            metadata_registry = MetadataRegistry()
-            global_metadata = config_data.get('metadata', {})
-            
-            # Registra metadados de arquivos
-            for file_path in global_metadata.get('files', []):
-                try:
-                    if os.path.exists(file_path):
-                        metadata_registry.register_from_file(file_path)
-                        logger.info(f"Metadados registrados do arquivo: {file_path}")
-                except Exception as e:
-                    logger.warning(f"Erro ao carregar metadados do arquivo {file_path}: {str(e)}")
-            
-            # Registra metadados definidos inline
-            for metadata_dict in global_metadata.get('datasets', []):
-                try:
-                    metadata_registry.register_from_dict(metadata_dict)
-                    logger.info(f"Metadados registrados para: {metadata_dict.get('name', 'desconhecido')}")
-                except Exception as e:
-                    logger.warning(f"Erro ao registrar metadados: {str(e)}")
-            
-            # Cria os conectores
-            connectors = {}
-            for source_config in sources_data:
-                source_id = source_config.get('id')
-                if not source_id:
-                    raise ConfigurationException("Configuração de fonte sem ID")
-                
-                # Verifica se já tem metadados ou se precisa buscar do registro
-                if 'metadata' not in source_config:
-                    dataset_name = source_config.get('dataset_name', source_id)
-                    metadata = metadata_registry.get_metadata(dataset_name)
-                    if metadata:
-                        source_config['metadata'] = metadata.to_dict()
-                        logger.info(f"Metadados do registro aplicados à fonte {source_id}")
-                
-                # Cria o conector
-                connector = cls.create_connector(source_config)
-                connectors[source_id] = connector
-                
-            return connectors
-                
-        except json.JSONDecodeError as e:
-            raise ConfigurationException(f"Erro ao decodificar JSON: {str(e)}")
 
 class MetadataEnabledCsvConnector(CsvConnector):
     """
@@ -438,6 +329,7 @@ class MetadataEnabledCsvConnector(CsvConnector):
         
         logger.info(f"Query adaptada com metadados: {adapted_query}")
         return adapted_query
+
 
 class MetadataEnabledDuckDBConnector(DataConnector):
     """
@@ -869,73 +761,112 @@ class MetadataEnabledDuckDBConnector(DataConnector):
             raise DataReadException(error_msg) from e
 
 
-# Exemplo de utilização
-if __name__ == "__main__":
-    # Define metadados para um dataset
-    metadata_json = """
-    {
-        "name": "vendas",
-        "description": "Dados de vendas mensais",
-        "columns": [
-            {
-                "name": "data",
-                "description": "Data da venda",
-                "data_type": "date",
-                "format": "%Y-%m-%d",
-                "alias": ["dt", "date", "data_venda"]
-            },
-            {
-                "name": "valor",
-                "description": "Valor da venda em reais",
-                "data_type": "float",
-                "alias": ["revenue", "montante", "receita"],
-                "aggregations": ["sum", "avg", "min", "max"]
-            },
-            {
-                "name": "quantidade",
-                "description": "Quantidade de produtos vendidos",
-                "data_type": "int",
-                "alias": ["qty", "qtd", "quantity"]
-            }
-        ]
-    }
+class MetadataEnabledDataConnectorFactory(DataConnectorFactory):
+    """
+    Factory de conectores com suporte a metadados.
+    
+    Estende a factory padrão para criar conectores que reconhecem e
+    utilizam metadados de colunas.
     """
     
-    # Cria um config com metadados
-    config = MetadataEnabledDataSourceConfig(
-        "vendas_perdidas_csv",
-        "duckdb_csv",
-        metadata=json.loads(metadata_json),
-        path="vendas_perdidas.csv",
-        delimiter=","
-    )
-    
-    # Cria o conector usando a factory
-    connector = MetadataEnabledDataConnectorFactory.create_connector(config)
-    
-    try:
-        # Conecta e lê os dados
-        connector.connect()
+    @classmethod
+    def create_connector(cls, config: Union[Dict, DataSourceConfig, MetadataEnabledDataSourceConfig]) -> DataConnector:
+        """
+        Cria um conector com suporte a metadados.
         
-        # Lê todos os dados (com as conversões de tipo aplicadas)
-        all_data = connector.read_data()
-        print(f"Total de registros: {len(all_data)}")
-        print(f"Colunas: {list(all_data.columns)}")
-        print(f"Tipos das colunas: {all_data.dtypes}")
-        
-        # Executa uma consulta usando aliases
-        try:
-            # Estas consultas são equivalentes graças aos metadados
-            result1 = connector.read_data("SELECT  * FROM csv")
-            print(f"\nSoma de ImpactoFinanceiro: {result1['SUM(ImpactoFinanceiro)'].iloc[0]}")
+        Args:
+            config: Configuração da fonte de dados.
             
-            result2 = connector.read_data("SELECT SUM(quantidade) FROM csv")
-            print(f"Soma de ImpactoFinanceiro: {result2['SUM(quantidade)'].iloc[0]}")
-        except Exception as e:
-            print(f"Erro na consulta: {str(e)}")
+        Returns:
+            DataConnector: Conector criado.
+        """
+        # Converte o config para MetadataEnabledDataSourceConfig se necessário
+        if isinstance(config, dict):
+            config = MetadataEnabledDataSourceConfig.from_dict(config)
+        elif isinstance(config, DataSourceConfig) and not isinstance(config, MetadataEnabledDataSourceConfig):
+            # Cria uma versão com metadados mantendo os parâmetros originais
+            config = MetadataEnabledDataSourceConfig(
+                config.source_id,
+                config.source_type,
+                metadata=None,
+                **config.params
+            )
         
-        # Fecha o conector
-        connector.close()
+        # Cria o conector apropriado com base no tipo
+        source_type = config.source_type
         
-    except Exception as e:
-        print(f"Erro: {str(e)}")
+        if source_type not in cls._connectors:
+            raise ConfigurationException(f"Tipo de conector não suportado: {source_type}")
+            
+        connector_class = cls._connectors[source_type]
+        
+        # Se o conector é o CSV, cria uma versão com metadados
+        if source_type == 'csv' and connector_class == CsvConnector:
+            return MetadataEnabledCsvConnector(config)
+        
+        # Para outros conectores, usa a classe original
+        return connector_class(config)
+    
+    @classmethod
+    def create_from_json(cls, json_config: str) -> Dict[str, DataConnector]:
+        """
+        Cria múltiplos conectores a partir de uma configuração JSON.
+        
+        Args:
+            json_config: String JSON com configurações.
+            
+        Returns:
+            Dict[str, DataConnector]: Dicionário com conectores.
+        """
+        try:
+            config_data = json.loads(json_config)
+            
+            if 'data_sources' not in config_data:
+                raise ConfigurationException("Formato de configuração inválido. Esperava 'data_sources' como chave principal.")
+                
+            sources_data = config_data['data_sources']
+            
+            # Processa metadados globais se existirem
+            metadata_registry = MetadataRegistry()
+            global_metadata = config_data.get('metadata', {})
+            
+            # Registra metadados de arquivos
+            for file_path in global_metadata.get('files', []):
+                try:
+                    if os.path.exists(file_path):
+                        metadata_registry.register_from_file(file_path)
+                        logger.info(f"Metadados registrados do arquivo: {file_path}")
+                except Exception as e:
+                    logger.warning(f"Erro ao carregar metadados do arquivo {file_path}: {str(e)}")
+            
+            # Registra metadados definidos inline
+            for metadata_dict in global_metadata.get('datasets', []):
+                try:
+                    metadata_registry.register_from_dict(metadata_dict)
+                    logger.info(f"Metadados registrados para: {metadata_dict.get('name', 'desconhecido')}")
+                except Exception as e:
+                    logger.warning(f"Erro ao registrar metadados: {str(e)}")
+            
+            # Cria os conectores
+            connectors = {}
+            for source_config in sources_data:
+                source_id = source_config.get('id')
+                if not source_id:
+                    raise ConfigurationException("Configuração de fonte sem ID")
+                
+                # Verifica se já tem metadados ou se precisa buscar do registro
+                if 'metadata' not in source_config:
+                    dataset_name = source_config.get('dataset_name', source_id)
+                    metadata = metadata_registry.get_metadata(dataset_name)
+                    if metadata:
+                        source_config['metadata'] = metadata.to_dict()
+                        logger.info(f"Metadados do registro aplicados à fonte {source_id}")
+                
+                # Cria o conector
+                connector = cls.create_connector(source_config)
+                connectors[source_id] = connector
+                
+            return connectors
+                
+        except json.JSONDecodeError as e:
+            raise ConfigurationException(f"Erro ao decodificar JSON: {str(e)}")
