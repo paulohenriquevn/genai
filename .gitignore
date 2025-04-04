@@ -5,6 +5,7 @@ __pycache__/
 outputs/**
 *.html
 *.db
+*.png
 # C extensions
 *.so
 
