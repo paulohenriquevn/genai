@@ -111,6 +111,7 @@ class ColumnMetadata:
             
         return result
 
+
 class DatasetMetadata:
     """
     Armazena metadados para um dataset completo.
@@ -375,6 +376,7 @@ class DatasetMetadata:
             return self._alias_lookup[name_lower]
         
         return None
+
 
 class MetadataRegistry:
     """
