@@ -27,6 +27,7 @@ class TransformationType(Enum):
     ENCODE_CATEGORICAL = 'encode_categorical'
     EXTRACT_DATE = 'extract_date'
     ROUND = 'round'
+    UPPERCASE = 'to_uppercase'  # Adicione essa linha
     REPLACE = 'replace'
 
 @dataclass
