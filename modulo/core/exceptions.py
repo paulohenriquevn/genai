@@ -36,3 +36,10 @@ class TemplateRenderError(BaseCoreException):
     Exception raised when a template cannot be rendered.
     """
     pass
+
+
+class QueryExecutionError(BaseCoreException):
+    """
+    Exception raised when there is an error executing a query.
+    """
+    pass

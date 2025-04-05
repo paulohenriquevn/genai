@@ -1,32 +1,16 @@
-#!/usr/bin/env python3
-"""
-OpenAI Data Analyzer
-====================
-
-Este módulo implementa um analisador de dados completo que utiliza a API OpenAI
-para gerar perguntas analíticas, executar consultas em linguagem natural,
-e produzir visualizações e relatórios de análise.
-
-Principais recursos:
-1. Geração de perguntas analíticas usando OpenAI
-2. Processamento de consultas em linguagem natural
-3. Visualização automatizada de dados
-4. Geração de relatórios HTML com análises e visualizações
-"""
-
 import os
 import sys
 import json
 import time
-import argparse
 import logging
+import argparse
 import pandas as pd
 import numpy as np
-from typing import Dict, List, Any, Optional, Union, Tuple
-from datetime import datetime
 import base64
-from pathlib import Path
 import webbrowser
+import traceback
+from typing import Dict, List, Any, Optional, Tuple
+from datetime import datetime
 
 # Configuração de logging
 logging.basicConfig(
@@ -48,19 +32,24 @@ except ImportError:
 
 # Importação dos módulos do sistema
 from natural_query_engine import NaturalLanguageQueryEngine
-from llm_integration import LLMIntegration, ModelType, LLMQueryGenerator
+from llm_integration import LLMIntegration, ModelType
 from core.response.base import BaseResponse
 from core.response.dataframe import DataFrameResponse
 from core.response.number import NumberResponse
 from core.response.string import StringResponse
 from core.response.chart import ChartResponse
 from core.response.error import ErrorResponse
+from utils.dataset_analyzer import DatasetAnalyzer
+from connector.metadata import MetadataRegistry, DatasetMetadata, ColumnMetadata
+from connector.semantic_layer_schema import (
+    SemanticSchema, ColumnSchema, ColumnType,RelationSchema
+)
 
 
 class OpenAIAnalyzer:
     """
-    Analisador de dados que utiliza a API OpenAI para gerar consultas,
-    análises e visualizações de dados.
+    Analisador de dados avançado que integra análise automática de datasets,
+    geração de esquemas semânticos, LLMs e visualização de dados.
     """
     
     def __init__(
@@ -68,23 +57,33 @@ class OpenAIAnalyzer:
         api_key: Optional[str] = None,
         model: str = "gpt-4",
         data_dir: Optional[str] = None,
-        output_dir: Optional[str] = None
+        output_dir: Optional[str] = None,
+        dataset_path: Optional[str] = None,
+        dataset_name: Optional[str] = None,
+        log_level: str = "INFO"
     ):
         """
-        Inicializa o analisador de dados com OpenAI.
+        Inicializa o analisador de dados com configurações personalizadas.
         
         Args:
             api_key: Chave de API do OpenAI (opcional, pode usar variável de ambiente)
             model: Modelo OpenAI a ser utilizado
             data_dir: Diretório onde os dados estão armazenados
             output_dir: Diretório para salvar relatórios e visualizações
+            dataset_path: Caminho direto para um arquivo de dataset
+            dataset_name: Nome personalizado para o dataset
+            log_level: Nível de logging (DEBUG, INFO, WARNING, ERROR)
         """
+        # Configura logging
+        self._setup_logging(log_level)
+        
         # Configura a API do OpenAI
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY")
         if not self.api_key:
-            raise ValueError("Chave de API OpenAI não fornecida. Defina OPENAI_API_KEY ou passe como parâmetro.")
+            logger.warning("Chave de API OpenAI não fornecida. Algumas funcionalidades estarão limitadas.")
+        else:
+            openai.api_key = self.api_key
         
-        openai.api_key = self.api_key
         self.model = model
         
         # Define diretórios
@@ -94,9 +93,23 @@ class OpenAIAnalyzer:
         # Cria diretório de saída se não existir
         os.makedirs(self.output_dir, exist_ok=True)
         
-        # Inicializa o motor de consulta em linguagem natural
+        # Dataset específico
+        self.dataset_path = dataset_path
+        self.dataset_name = dataset_name or (
+            os.path.basename(dataset_path).split('.')[0] if dataset_path else None
+        )
+        
+        # Inicializa componentes
+        self.dataset_analyzer = DatasetAnalyzer()
+        self.metadata_registry = MetadataRegistry()
         self.query_engine = None
-        self._initialize_query_engine()
+        self.llm_integration = self._initialize_llm()
+        
+        # Semantic schema
+        self.semantic_schema = None
+        
+        # Status de inicialização
+        self.initialized = False
         
         # Contador de análises
         self.analysis_count = 0
@@ -106,10 +119,281 @@ class OpenAIAnalyzer:
         
         logger.info(f"Analisador OpenAI inicializado com modelo {model}")
     
-    def _initialize_query_engine(self):
+    def _setup_logging(self, log_level: str) -> None:
+        """
+        Configura o nível de logging.
+        
+        Args:
+            log_level: Nível de logging (DEBUG, INFO, WARNING, ERROR)
+        """
+        numeric_level = getattr(logging, log_level.upper(), None)
+        if not isinstance(numeric_level, int):
+            raise ValueError(f'Nível de log inválido: {log_level}')
+        
+        logger.setLevel(numeric_level)
+        
+        # Cria um handler de arquivo para SQL logs
+        sql_handler = logging.FileHandler("sql_queries.log")
+        sql_handler.setLevel(logging.DEBUG)
+        sql_formatter = logging.Formatter('%(asctime)s - SQL QUERY - %(message)s')
+        sql_handler.setFormatter(sql_formatter)
+        
+        # Adiciona o handler ao logger
+        sql_logger = logging.getLogger("sql_logger")
+        sql_logger.setLevel(logging.DEBUG)
+        sql_logger.addHandler(sql_handler)
+    
+    def _initialize_llm(self) -> LLMIntegration:
+        """
+        Inicializa a integração com o modelo de linguagem.
+        
+        Returns:
+            Instância de LLMIntegration
+        """
+        if not self.api_key:
+            # Sem api_key, usa modo mock
+            logger.info("Inicializando LLM em modo mock (sem API key)")
+            return LLMIntegration(model_type=ModelType.MOCK)
+        
+        try:
+            # Tenta inicializar com OpenAI primeiro
+            llm = LLMIntegration(
+                model_type=ModelType.OPENAI,
+                model_name=self.model,
+                api_key=self.api_key
+            )
+            logger.info(f"Integração LLM inicializada com OpenAI ({self.model})")
+            return llm
+        except Exception as e:
+            logger.warning(f"Falha ao inicializar OpenAI: {str(e)}. Tentando Anthropic...")
+            
+            # Tenta Anthropic como alternativa
+            try:
+                llm = LLMIntegration(
+                    model_type=ModelType.ANTHROPIC,
+                    model_name="claude-3-opus-20240229",
+                    api_key=os.environ.get("ANTHROPIC_API_KEY")
+                )
+                logger.info("Integração LLM inicializada com Anthropic (Claude)")
+                return llm
+            except Exception as e:
+                logger.warning(f"Falha ao inicializar Anthropic: {str(e)}. Usando modo mock.")
+                
+                # Fallback para mock
+                return LLMIntegration(model_type=ModelType.MOCK)
+    
+    def process_dataset(self, dataset_path: Optional[str] = None) -> SemanticSchema:
+        """
+        Processa um dataset, gera metadados e esquema semântico.
+        
+        Args:
+            dataset_path: Caminho para o arquivo de dataset (opcional)
+            
+        Returns:
+            Esquema semântico gerado
+        """
+        # Usa o caminho fornecido ou o caminho padrão
+        file_path = dataset_path or self.dataset_path
+        
+        if not file_path:
+            raise ValueError("Caminho do dataset não fornecido. Use dataset_path ou defina na inicialização.")
+        
+        logger.info(f"Processando dataset: {file_path}")
+        
+        try:
+            # Lê o dataset
+            df = self.dataset_analyzer.read_dataset(file_path)
+            logger.info(f"Dataset carregado com {len(df)} registros e {len(df.columns)} colunas")
+            
+            # Obtém o nome do dataset
+            dataset_name = self.dataset_name or os.path.basename(file_path).split('.')[0]
+            
+            # Analisa o dataset
+            fields_info = self.dataset_analyzer.analyze_dataset(df)
+            logger.info(f"Análise de campos concluída. {len(fields_info)} campos analisados.")
+            
+            # Gera metadados do dataset
+            dataset_metadata = self._generate_dataset_metadata(dataset_name, fields_info)
+            
+            # Registra os metadados
+            self.metadata_registry.register_metadata(dataset_metadata)
+            logger.info(f"Metadados registrados para dataset '{dataset_name}'")
+            
+            # Gera esquema semântico
+            self.semantic_schema = self._generate_semantic_schema(dataset_name, fields_info, file_path)
+            logger.info(f"Esquema semântico gerado para dataset '{dataset_name}'")
+            
+            # Inicializa o motor de consulta
+            self._initialize_query_engine(df, dataset_name)
+            
+            # Salva metadados e esquema para referência
+            metadata_path = os.path.join(self.output_dir, f"{dataset_name}_metadata.json")
+            schema_path = os.path.join(self.output_dir, f"{dataset_name}_schema.json")
+            
+            with open(metadata_path, "w", encoding="utf-8") as f:
+                json.dump(dataset_metadata.__dict__, f, indent=2, default=str)
+            
+            self.semantic_schema.save_to_file(schema_path)
+            
+            logger.info(f"Arquivos de metadados salvos: {metadata_path}, {schema_path}")
+            
+            return self.semantic_schema
+            
+        except Exception as e:
+            logger.error(f"Erro ao processar dataset: {str(e)}")
+            logger.debug(traceback.format_exc())
+            raise
+    
+    def _generate_dataset_metadata(self, name: str, fields_info: List[Dict[str, Any]]) -> DatasetMetadata:
+        """
+        Gera metadados para o dataset baseado na análise.
+        
+        Args:
+            name: Nome do dataset
+            fields_info: Informações dos campos analisados
+            
+        Returns:
+            DatasetMetadata: Metadados gerados
+        """
+        # Cria o objeto de metadados
+        metadata = DatasetMetadata(
+            name=name,
+            description=f"Dataset {name}",
+            source=os.path.dirname(self.dataset_path) if self.dataset_path else "unknown",
+            columns={}
+        )
+        
+        # Adiciona metadados de colunas
+        for field in fields_info:
+            col_name = field['name']
+            
+            # Determina se a coluna é categórica, temporal ou numérica
+            is_categorical = field['data_type'] == 'string' and 'id' not in col_name.lower()
+            is_temporal = field['data_type'] == 'date'
+            is_numeric = field['data_type'] in ['number', 'integer']
+            
+            metadata.columns[col_name] = ColumnMetadata(
+                name=col_name,
+                description=field['description'],
+                data_type=field['data_type'],
+                format=None,
+                alias=[col_name.lower()] if is_categorical else [],
+                tags=["categorical"] if is_categorical else 
+                     ["temporal"] if is_temporal else 
+                     ["numeric"] if is_numeric else []
+            )
+        
+        return metadata
+    
+    def _generate_semantic_schema(
+        self, 
+        name: str, 
+        fields_info: List[Dict[str, Any]], 
+        source_path: str
+    ) -> SemanticSchema:
+        """
+        Gera um esquema semântico para o dataset.
+        
+        Args:
+            name: Nome do dataset
+            fields_info: Informações dos campos analisados
+            source_path: Caminho do arquivo de origem
+            
+        Returns:
+            SemanticSchema: Esquema semântico gerado
+        """
+        # Mapeia tipos de dados do analisador para tipos de coluna do esquema
+        type_mapping = {
+            'string': ColumnType.STRING,
+            'integer': ColumnType.INTEGER,
+            'number': ColumnType.FLOAT,
+            'boolean': ColumnType.BOOLEAN,
+            'date': ColumnType.DATE,
+            'datetime': ColumnType.DATETIME
+        }
+        
+        # Cria as colunas do esquema
+        columns = []
+        for field in fields_info:
+            col_type = type_mapping.get(field['data_type'], ColumnType.STRING)
+            
+            # Detecta chaves primárias
+            is_primary = 'id' in field['name'].lower() and field['name'].lower() == f"id_{name.lower()}"
+            
+            # Cria o esquema da coluna
+            col_schema = ColumnSchema(
+                name=field['name'],
+                type=col_type,
+                description=field['description'],
+                nullable=True,
+                primary_key=is_primary,
+                unique=is_primary,
+                tags=field['alias']
+            )
+            
+            columns.append(col_schema)
+        
+        # Detecta possíveis relações (baseado em chaves estrangeiras comuns)
+        relations = []
+        columns_by_name = {col.name: col for col in columns}
+        
+        for col in columns:
+            # Verifica se parece ser uma chave estrangeira
+            if col.name.startswith('id_') and not col.primary_key:
+                # Extrai o nome da tabela referenciada
+                ref_table = col.name[3:].lower()
+                
+                # Verifica se a coluna referenciada poderia existir
+                if ref_table != name.lower():
+                    relations.append(
+                        RelationSchema(
+                            source_table=name,
+                            source_column=col.name,
+                            target_table=ref_table,
+                            target_column=f"id_{ref_table}",
+                            relationship_type='many_to_one'
+                        )
+                    )
+        
+        # Cria o esquema semântico
+        schema = SemanticSchema(
+            name=name,
+            description=f"Esquema semântico para dataset {name}",
+            source_type=os.path.splitext(source_path)[1].lstrip('.'),
+            source_path=source_path,
+            columns=columns,
+            relations=relations,
+            version="1.0.0",
+            tags=[name]
+        )
+        
+        return schema
+    
+    def _initialize_query_engine(self, df: pd.DataFrame, name: str) -> None:
         """
         Inicializa o motor de consulta em linguagem natural.
-        Carrega dados de exemplo se não houver configuração específica.
+        
+        Args:
+            df: DataFrame carregado
+            name: Nome do dataset
+        """
+        if self.query_engine is None:
+            # Cria uma nova instância do motor
+            self.query_engine = NaturalLanguageQueryEngine()
+        
+        # Carrega o DataFrame no motor
+        self.query_engine.load_data(
+            data=df,
+            name=name,
+            description=f"Dataset {name}"
+        )
+        
+        self.initialized = True
+        logger.info(f"Motor de consulta inicializado com dataset '{name}'")
+    
+    def _load_multiple_datasets(self) -> None:
+        """
+        Carrega múltiplos datasets do diretório de dados.
         """
         try:
             # Verifica se há um arquivo de configuração
@@ -130,12 +414,14 @@ class OpenAIAnalyzer:
                 # Carrega dados de exemplo manualmente
                 self._load_sample_data()
             
+            self.initialized = True
             logger.info(f"Motor de consulta inicializado com {len(self.query_engine.dataframes)} datasets")
         except Exception as e:
             logger.error(f"Erro ao inicializar o motor de consulta: {str(e)}")
+            logger.debug(traceback.format_exc())
             raise
     
-    def _load_sample_data(self):
+    def _load_sample_data(self) -> None:
         """
         Carrega dados de exemplo para análise, incluindo clientes, vendas e vendas perdidas.
         """
@@ -185,9 +471,10 @@ class OpenAIAnalyzer:
         
         except Exception as e:
             logger.error(f"Erro ao carregar dados de exemplo: {str(e)}")
+            logger.debug(traceback.format_exc())
             raise
     
-    def _create_synthetic_data(self):
+    def _create_synthetic_data(self) -> None:
         """
         Cria dados sintéticos para demonstração quando não há dados disponíveis.
         """
@@ -254,11 +541,26 @@ class OpenAIAnalyzer:
         """
         logger.info(f"Gerando {num_questions} perguntas sobre {topic}")
         
+        # Verifica se o analisador está inicializado
+        if not self.initialized:
+            self._load_multiple_datasets()
+        
         # Cria descrição dos dados disponíveis
         dfs_info = "\n".join([
             f"- {name}: {df.description} ({len(df.dataframe)} registros, colunas: {', '.join(df.dataframe.columns)})" 
             for name, df in self.query_engine.dataframes.items()
         ])
+        
+        # Cria descrição do esquema semântico, se disponível
+        schema_info = ""
+        if self.semantic_schema:
+            schema_info = "\nEsquema Semântico:\n"
+            for col in self.semantic_schema.columns:
+                schema_info += f"- {col.name}: {col.type.value} - {col.description}\n"
+            if self.semantic_schema.relations:
+                schema_info += "\nRelacionamentos:\n"
+                for rel in self.semantic_schema.relations:
+                    schema_info += f"- {rel.source_table}.{rel.source_column} -> {rel.target_table}.{rel.target_column} ({rel.relationship_type})\n"
         
         # Monta o prompt
         prompt = f"""
@@ -266,6 +568,8 @@ class OpenAIAnalyzer:
         que podem ser respondidas usando os seguintes dados:
         
         {dfs_info}
+        
+        {schema_info}
         
         As perguntas devem ser diversificadas e incluir análises:
         1. Descritivas (contagens, somas, médias)
@@ -293,6 +597,11 @@ class OpenAIAnalyzer:
             # Processa a resposta
             questions_text = response.choices[0].message.content.strip()
             
+            # Loga a consulta SQL gerada (se existir)
+            if hasattr(response, 'sql_query'):
+                sql_logger = logging.getLogger("sql_logger")
+                sql_logger.debug(f"Query: {prompt}\nSQL: {response.sql_query}")
+            
             # Separa as perguntas linha por linha
             questions = [q.strip() for q in questions_text.split('\n') if q.strip()]
             
@@ -304,6 +613,7 @@ class OpenAIAnalyzer:
             
         except Exception as e:
             logger.error(f"Erro ao gerar perguntas analíticas: {str(e)}")
+            logger.debug(traceback.format_exc())
             # Retorna algumas perguntas básicas como fallback
             return [
                 f"Qual é o total de {topic}?",
@@ -350,6 +660,14 @@ class OpenAIAnalyzer:
                 - Extrair insights sobre como reduzir vendas perdidas e aumentar conversão
                 """
             
+            # Inclui informações do esquema semântico, se disponível
+            schema_info = ""
+            if self.semantic_schema:
+                schema_info = "\nInformações do esquema semântico:\n"
+                for col in self.semantic_schema.columns:
+                    if col.name in query.lower():
+                        schema_info += f"- Coluna '{col.name}': {col.type.value} - {col.description}\n"
+            
             # Monta o prompt
             prompt = f"""
             Analise o resultado da seguinte consulta:
@@ -357,6 +675,8 @@ class OpenAIAnalyzer:
             CONSULTA: "{query}"
             
             {context}
+            
+            {schema_info}
             
             RESULTADO:
             {result_description}
@@ -392,11 +712,17 @@ class OpenAIAnalyzer:
             # Extrai a análise
             analysis = response.choices[0].message.content.strip()
             
+            # Loga a consulta SQL gerada (se existir)
+            if hasattr(response, 'sql_query'):
+                sql_logger = logging.getLogger("sql_logger")
+                sql_logger.debug(f"Query: {query}\nSQL: {response.sql_query}")
+            
             logger.info(f"Análise gerada para a consulta: '{query[:50]}...'")
             return analysis
             
         except Exception as e:
             logger.error(f"Erro ao analisar resultado da consulta: {str(e)}")
+            logger.debug(traceback.format_exc())
             return f"Não foi possível gerar uma análise detalhada devido a um erro: {str(e)}"
     
     def _format_result_for_analysis(self, result: BaseResponse) -> str:
@@ -444,6 +770,7 @@ class OpenAIAnalyzer:
                 
             except Exception as e:
                 # Em caso de erro, usa formato simples
+                logger.warning(f"Erro ao formatar estatísticas do DataFrame: {str(e)}")
                 if len(df) > 20:
                     description = f"DataFrame com {len(df)} registros. Primeiras 10 linhas:\n{df.head(10).to_string()}\n"
                 else:
@@ -526,9 +853,17 @@ class OpenAIAnalyzer:
         """
         logger.info(f"Executando consulta: {query}")
         
+        # Verifica se o analisador está inicializado
+        if not self.initialized:
+            self._load_multiple_datasets()
+        
         try:
             # Executa a consulta
+            start_time = time.time()
             result = self.query_engine.execute_query(query)
+            execution_time = time.time() - start_time
+            
+            logger.info(f"Consulta executada em {execution_time:.2f}s")
             
             # Gera análise do resultado
             analysis = self.analyze_query_result(query, result)
@@ -537,6 +872,7 @@ class OpenAIAnalyzer:
             
         except Exception as e:
             logger.error(f"Erro ao executar consulta: {str(e)}")
+            logger.debug(traceback.format_exc())
             error_response = ErrorResponse(f"Erro ao processar consulta: {str(e)}")
             return error_response, f"Não foi possível analisar o resultado devido a um erro: {str(e)}"
     
@@ -564,7 +900,7 @@ class OpenAIAnalyzer:
         logger.info(f"Visualização salva em: {output_path}")
         return output_path
     
-    def run_analysis(self, topic: str, num_questions: int = 5) -> dict:
+    def run_analysis(self, topic: str, num_questions: int = 5) -> Dict[str, Any]:
         """
         Executa uma análise completa com base em um tópico.
         
@@ -597,14 +933,21 @@ class OpenAIAnalyzer:
         # Executa cada pergunta
         for i, question in enumerate(questions):
             try:
+                logger.info(f"Executando pergunta {i+1}/{len(questions)}: {question}")
+                
                 # Executa a consulta
+                start_time = time.time()
                 result, analysis = self.run_query(question)
+                execution_time = time.time() - start_time
+                
+                logger.info(f"Pergunta {i+1} respondida em {execution_time:.2f}s")
                 
                 # Registra resultado e análise
                 query_result = {
                     "query": question,
                     "result_type": type(result).__name__,
                     "analysis": analysis,
+                    "execution_time": execution_time,
                     "visualization_path": None
                 }
                 
@@ -626,6 +969,7 @@ class OpenAIAnalyzer:
                 
             except Exception as e:
                 logger.error(f"Erro ao processar pergunta '{question}': {str(e)}")
+                logger.debug(traceback.format_exc())
                 analysis_results["queries"].append({
                     "query": question,
                     "result_type": "Error",
@@ -634,6 +978,7 @@ class OpenAIAnalyzer:
                 })
         
         # Gera um resumo geral da análise
+        logger.info("Gerando resumo da análise...")
         summary = self._generate_analysis_summary(analysis_results)
         analysis_results["summary"] = summary
         
@@ -641,15 +986,18 @@ class OpenAIAnalyzer:
         self._save_analysis_results(analysis_results)
         
         # Gera relatório HTML
+        logger.info("Gerando relatório HTML...")
         report_path = self.generate_html_report(analysis_results)
         analysis_results["report_path"] = report_path
         
         # Armazena os resultados
         self.analysis_results.append(analysis_results)
         
+        logger.info(f"Análise concluída: {len(analysis_results['queries'])} consultas processadas")
+        
         return analysis_results
     
-    def _generate_analysis_summary(self, analysis_results: dict) -> str:
+    def _generate_analysis_summary(self, analysis_results: Dict[str, Any]) -> str:
         """
         Gera um resumo geral da análise usando OpenAI.
         
@@ -661,8 +1009,7 @@ class OpenAIAnalyzer:
         """
         try:
             # Compila as análises individuais
-            analyses = [f"Consulta: {q['query']}\nAnálise: {q['analysis']}" 
-                       for q in analysis_results["queries"]]
+            analyses = [f"Consulta: {q['query']}\nAnálise: {q['analysis']}" for q in analysis_results["queries"]]
             
             all_analyses = "\n\n".join(analyses)
             
@@ -696,14 +1043,20 @@ class OpenAIAnalyzer:
             # Extrai o resumo
             summary = response.choices[0].message.content.strip()
             
+            # Loga a consulta SQL gerada (se existir)
+            if hasattr(response, 'sql_query'):
+                sql_logger = logging.getLogger("sql_logger")
+                sql_logger.debug(f"Summary Query\nSQL: {response.sql_query}")
+            
             logger.info(f"Resumo geral gerado para análise sobre '{analysis_results['topic']}'")
             return summary
             
         except Exception as e:
             logger.error(f"Erro ao gerar resumo da análise: {str(e)}")
+            logger.debug(traceback.format_exc())
             return "Não foi possível gerar um resumo consolidado da análise."
     
-    def _save_analysis_results(self, analysis_results: dict) -> str:
+    def _save_analysis_results(self, analysis_results: Dict[str, Any]) -> str:
         """
         Salva os resultados da análise em formato JSON.
         
@@ -731,7 +1084,7 @@ class OpenAIAnalyzer:
         logger.info(f"Resultados da análise salvos em: {output_path}")
         return output_path
     
-    def generate_html_report(self, analysis_results: dict) -> str:
+    def generate_html_report(self, analysis_results: Dict[str, Any]) -> str:
         """
         Gera um relatório HTML com os resultados da análise.
         
@@ -786,14 +1139,39 @@ class OpenAIAnalyzer:
                 # Se tiver visualização, não mostrar novamente (já está na seção de visualizações)
                 viz_img = "<p><em>Visualização disponível na seção de gráficos.</em></p>"
             
+            exec_time = f"<p><strong>Tempo de execução:</strong> {query.get('execution_time', 0):.2f}s</p>" if query.get('execution_time') else ""
+            
             queries_html += f"""
             <div class="query-card">
                 <h3>Consulta: {query["query"]}</h3>
                 <p><strong>Tipo de resultado:</strong> {query["result_type"]}</p>
+                {exec_time}
                 {viz_img}
                 <div class="analysis-container">
                     <h4>Análise:</h4>
                     <p>{query["analysis"]}</p>
+                </div>
+            </div>
+            """
+        
+        # Adiciona informações técnicas
+        technical_info = ""
+        if self.semantic_schema:
+            technical_info = f"""
+            <div class="technical-section">
+                <h2>Informações Técnicas</h2>
+                <div class="tech-card">
+                    <h3>Esquema Semântico</h3>
+                    <p><strong>Nome:</strong> {self.semantic_schema.name}</p>
+                    <p><strong>Descrição:</strong> {self.semantic_schema.description}</p>
+                    <p><strong>Fonte:</strong> {self.semantic_schema.source_type} ({self.semantic_schema.source_path})</p>
+                    
+                    <h4>Colunas:</h4>
+                    <ul>
+                        {"".join(f"<li><strong>{col.name}</strong> ({col.type.value}): {col.description}</li>" for col in self.semantic_schema.columns)}
+                    </ul>
+                    
+                    {f"<h4>Relações:</h4><ul>{''.join(f'<li>{rel.source_table}.{rel.source_column} → {rel.target_table}.{rel.target_column} ({rel.relationship_type})</li>' for rel in self.semantic_schema.relations)}</ul>" if self.semantic_schema.relations else ""}
                 </div>
             </div>
             """
@@ -838,6 +1216,15 @@ class OpenAIAnalyzer:
                     border-radius: 5px 5px 0 0;
                 }}
                 
+                header h1 {{
+                    margin-bottom: 10px;
+                }}
+                
+                .metadata {{
+                    font-size: 0.9em;
+                    opacity: 0.8;
+                }}
+                
                 .content {{
                     padding: 20px;
                 }}
@@ -854,11 +1241,11 @@ class OpenAIAnalyzer:
                     margin-bottom: 20px;
                 }}
                 
-                .visualization-section, .queries-section {{
+                .visualization-section, .queries-section, .technical-section {{
                     margin-top: 40px;
                 }}
                 
-                .visualization-card, .query-card {{
+                .visualization-card, .query-card, .tech-card {{
                     background-color: var(--card-bg-color);
                     border-radius: 5px;
                     box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
@@ -866,7 +1253,7 @@ class OpenAIAnalyzer:
                     margin-bottom: 20px;
                 }}
                 
-                .visualization-card h3, .query-card h3 {{
+                .visualization-card h3, .query-card h3, .tech-card h3 {{
                     color: var(--secondary-color);
                     border-bottom: 1px solid #eee;
                     padding-bottom: 10px;
@@ -900,6 +1287,15 @@ class OpenAIAnalyzer:
                     font-style: italic;
                 }}
                 
+                .tech-card ul {{
+                    list-style-type: none;
+                    padding-left: 10px;
+                }}
+                
+                .tech-card li {{
+                    margin-bottom: 8px;
+                }}
+                
                 footer {{
                     text-align: center;
                     padding: 20px;
@@ -924,7 +1320,7 @@ class OpenAIAnalyzer:
             <div class="container">
                 <header>
                     <h1>Análise de {analysis_results["topic"]}</h1>
-                    <p>Gerado em: {analysis_results["timestamp"]}</p>
+                    <p class="metadata">Gerado em: {analysis_results["timestamp"]} • ID: {analysis_results["id"]}</p>
                 </header>
                 
                 <div class="content">
@@ -942,6 +1338,8 @@ class OpenAIAnalyzer:
                         <h2>Consultas e Análises</h2>
                         {queries_html}
                     </div>
+                    
+                    {technical_info}
                 </div>
                 
                 <footer>
@@ -974,85 +1372,62 @@ class OpenAIAnalyzer:
             logger.info(f"Relatório aberto no navegador: {file_url}")
         except Exception as e:
             logger.error(f"Erro ao abrir relatório: {str(e)}")
+            logger.debug(traceback.format_exc())
             print(f"Não foi possível abrir o relatório automaticamente. Acesse manualmente: {report_path}")
-
-
-def main():
-    """
-    Função principal para execução como script.
-    """
-    # Parse argumentos da linha de comando
-    parser = argparse.ArgumentParser(description="Analisador de dados com OpenAI")
     
-    parser.add_argument("--api-key", help="Chave de API do OpenAI")
-    parser.add_argument("--model", default="gpt-4", help="Modelo OpenAI a ser utilizado")
-    parser.add_argument("--data-dir", help="Diretório onde os dados estão armazenados")
-    parser.add_argument("--output-dir", help="Diretório para salvar relatórios e visualizações")
-    
-    # Opções de análise
-    parser.add_argument("--topic", default="vendas perdidas", 
-                        help="Tópico para análise automática (ex: 'vendas', 'clientes')")
-    parser.add_argument("--questions", type=int, default=5,
-                        help="Número de perguntas a serem geradas")
-    parser.add_argument("--query", help="Executar uma consulta específica")
-    parser.add_argument("--open-report", action="store_true", 
-                        help="Abrir relatório no navegador após a análise")
-    
-    args = parser.parse_args()
-    
-    try:
-        # Inicializa o analisador
-        analyzer = OpenAIAnalyzer(
-            api_key=args.api_key,
-            model=args.model,
-            data_dir=args.data_dir,
-            output_dir=args.output_dir
-        )
+    def execute_analysis(self, schema: Optional[SemanticSchema] = None, query: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Executa análise com base no esquema semântico e/ou consulta específica.
         
-        if args.query:
-            # Executa uma consulta específica
-            print(f"\nExecutando consulta: '{args.query}'")
-            result, analysis = analyzer.run_query(args.query)
+        Args:
+            schema: Esquema semântico a ser utilizado (opcional)
+            query: Consulta específica a ser executada (opcional)
             
-            print("\n--- Resultado ---")
-            if isinstance(result, DataFrameResponse):
-                print("\nDataFrame resultante:")
-                print(result.value.head(10))
-                if len(result.value) > 10:
-                    print(f"...e mais {len(result.value) - 10} linhas.")
-            elif isinstance(result, ChartResponse):
-                viz_path = analyzer.save_visualization(result, "consulta_especifica")
-                print(f"\nVisualização gerada e salva em: {viz_path}")
-            elif isinstance(result, NumberResponse):
-                print(f"\nResultado numérico: {result.value}")
-            elif isinstance(result, StringResponse):
-                print(f"\nResultado textual: {result.value}")
-            else:
-                print(f"\nResultado de tipo {type(result).__name__}: {result.value}")
-            
-            print("\n--- Análise ---")
-            print(analysis)
-            
-        else:
-            # Executa análise completa
-            print(f"\nIniciando análise sobre '{args.topic}' com {args.questions} perguntas...")
-            
-            analysis_results = analyzer.run_analysis(args.topic, args.questions)
-            
-            print(f"\nAnálise concluída. Resultados salvos em: {analysis_results['report_path']}")
-            
-            if args.open_report:
-                print("Abrindo relatório no navegador...")
-                analyzer.open_report(analysis_results['report_path'])
-            
-        print("\nProcessamento concluído.")
+        Returns:
+            Resultados da análise
+        """
+        # Se um esquema específico foi fornecido, usa-o
+        if schema is not None:
+            self.semantic_schema = schema
+            logger.info(f"Usando esquema semântico fornecido: {schema.name}")
         
-    except Exception as e:
-        logger.error(f"Erro na execução do analisador: {str(e)}")
-        print(f"\nErro: {str(e)}")
-        print("\nVerifique o arquivo de log para mais detalhes.")
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
+        # Se uma consulta específica foi fornecida, executa-a
+        if query is not None:
+            logger.info(f"Executando consulta específica: {query}")
+            result, analysis = self.run_query(query)
+            
+            # Cria uma estrutura de resultados simplificada
+            analysis_results = {
+                "id": f"single_query_{int(time.time())}",
+                "topic": "consulta_específica",
+                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "queries": [{
+                    "query": query,
+                    "result_type": type(result).__name__,
+                    "analysis": analysis,
+                    "visualization_path": None
+                }],
+                "summary": analysis,
+                "visualizations": []
+            }
+            
+            # Se o resultado for uma visualização, salva-a
+            if isinstance(result, ChartResponse):
+                viz_filename = f"query_result_{int(time.time())}"
+                viz_path = self.save_visualization(result, viz_filename)
+                analysis_results["queries"][0]["visualization_path"] = viz_path
+                analysis_results["visualizations"].append({
+                    "path": viz_path,
+                    "query": query,
+                    "analysis": analysis
+                })
+            
+            # Gera relatório HTML
+            report_path = self.generate_html_report(analysis_results)
+            analysis_results["report_path"] = report_path
+            
+            return analysis_results
+        
+        # Se nenhuma consulta específica foi fornecida, executa análise completa
+        topic = self.semantic_schema.name if self.semantic_schema else "dados_gerais"
+        return self.run_analysis(topic)

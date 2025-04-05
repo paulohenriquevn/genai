@@ -1,156 +1,181 @@
 # OpenAI Analyzer
 
-O OpenAI Analyzer é um programa completo que utiliza a API do OpenAI para analisar dados, executar consultas em linguagem natural e gerar visualizações e relatórios.
+Sistema avançado de análise de dados que utiliza a API do OpenAI para gerar perguntas analíticas, processar consultas em linguagem natural, criar visualizações e gerar relatórios completos de análise.
 
-## Funcionalidades Principais
+## Recursos Principais
 
-- **Geração automática de perguntas analíticas**: Utiliza a API do OpenAI para gerar perguntas relevantes sobre seus dados.
-- **Processamento de consultas em linguagem natural**: Transforma perguntas em análises de dados.
-- **Visualizações automáticas**: Gera gráficos e visualizações quando apropriado.
-- **Análise de resultados com IA**: Fornece insights e análises sobre os resultados das consultas.
-- **Relatórios HTML interativos**: Gera relatórios completos com visualizações e análises.
-
-## Requisitos
-
-- Python 3.8 ou superior
-- Bibliotecas Python (instaláveis via `pip install -r requirements.txt`):
-  - pandas
-  - numpy
-  - matplotlib
-  - openai>=1.3.0
-  - duckdb
-  - argparse
+- **Análise Automática de Datasets**: Detecta automaticamente tipos de campo, gera metadados e esquemas semânticos
+- **Geração de Consultas Analíticas**: Cria automaticamente perguntas relevantes sobre seus dados
+- **Interpretação em Linguagem Natural**: Traduz perguntas em linguagem natural para consultas de dados
+- **Visualizações Automáticas**: Gera gráficos e visualizações apropriados para os dados
+- **Análise de Resultados com IA**: Fornece insights detalhados sobre os resultados de consultas
+- **Relatórios HTML Interativos**: Gera relatórios completos com visualizações e análises
+- **Logging Detalhado**: Mantém registros de consultas SQL, erros e fluxo de execução
 
 ## Instalação
 
-1. Clone este repositório:
-   ```
+1. Clone o repositório:
+   ```bash
    git clone https://github.com/seu-usuario/natural-language-query-system.git
    cd natural-language-query-system
    ```
 
 2. Instale as dependências:
-   ```
+   ```bash
    pip install -r requirements.txt
    ```
 
 3. Configure a chave de API do OpenAI:
-   ```
+   ```bash
    export OPENAI_API_KEY=sua-chave-de-api
    ```
 
-## Uso
+## Uso Básico
 
 ### Linha de Comando
 
-O OpenAI Analyzer pode ser executado como script Python com várias opções de linha de comando:
-
 ```bash
-python openai_analyzer.py [opções]
+# Análise básica com tópico padrão (vendas perdidas)
+python openai_analyzer.py
+
+# Análise com tópico personalizado
+python openai_analyzer.py --topic "vendas" --questions 8
+
+# Executar uma consulta específica
+python openai_analyzer.py --query "Mostre um gráfico de barras com o total de vendas perdidas por motivo"
+
+# Processar um dataset específico e gerar esquema semântico
+python openai_analyzer.py --dataset vendas_2023.csv --process-dataset-only
+
+# Análise completa com dataset específico
+python openai_analyzer.py --dataset vendas_2023.csv --topic "performance de vendas"
+
+# Abrir relatório no navegador após a análise
+python openai_analyzer.py --open-report
 ```
 
-#### Opções disponíveis
-
-- `--api-key API_KEY`: Chave de API do OpenAI (opcional se a variável de ambiente estiver configurada)
-- `--model MODEL`: Modelo do OpenAI a ser utilizado (padrão: gpt-4)
-- `--data-dir DATA_DIR`: Diretório onde os dados estão armazenados
-- `--output-dir OUTPUT_DIR`: Diretório para salvar relatórios e visualizações
-- `--topic TOPIC`: Tópico para análise automática (ex: 'vendas', 'clientes')
-- `--questions QUESTIONS`: Número de perguntas a serem geradas
-- `--query QUERY`: Executar uma consulta específica
-- `--open-report`: Abrir relatório no navegador após a análise
-
-### Exemplos de Uso
-
-1. Análise básica com configurações padrão:
-   ```bash
-   python openai_analyzer.py --topic "vendas perdidas"
-   ```
-
-2. Análise personalizada com mais perguntas:
-   ```bash
-   python openai_analyzer.py --topic "vendas" --questions 8 --open-report
-   ```
-
-3. Executar uma consulta específica:
-   ```bash
-   python openai_analyzer.py --query "Mostre um gráfico de barras com o total de vendas perdidas por motivo"
-   ```
-
-4. Análise com modelo e diretórios personalizados:
-   ```bash
-   python openai_analyzer.py --model "gpt-3.5-turbo" --data-dir "/caminho/para/dados" --output-dir "/caminho/para/saída" --topic "clientes"
-   ```
-
-### Uso como Biblioteca Python
-
-O OpenAI Analyzer também pode ser utilizado como uma biblioteca Python em seus próprios scripts:
+### Como Biblioteca Python
 
 ```python
 from openai_analyzer import OpenAIAnalyzer
 
-# Inicializa o analisador
+# Inicializar o analisador
 analyzer = OpenAIAnalyzer(
-    api_key="sua-chave-de-api",  # Opcional se a variável de ambiente estiver configurada
-    model="gpt-4",
-    data_dir="/caminho/para/dados",  # Opcional
-    output_dir="/caminho/para/saída"  # Opcional
+    api_key="sua-chave-de-api",  # Opcional se definida como variável de ambiente
+    model="gpt-4",               # Modelo OpenAI a usar
+    data_dir="/caminho/para/dados",
+    output_dir="/caminho/para/saída"
 )
 
-# Executa uma consulta específica
-result, analysis = analyzer.run_query("Qual é o total de vendas por cliente?")
-print(analysis)
+# Método 1: Processar um dataset específico
+schema = analyzer.process_dataset("/caminho/para/dataset.csv")
 
-# Executa uma análise completa sobre um tópico
-analysis_results = analyzer.run_analysis("vendas perdidas", num_questions=5)
+# Método 2: Executar uma consulta específica
+result, analysis = analyzer.run_query("Quais são os principais motivos de vendas perdidas?")
 
-# Abre o relatório no navegador
+# Método 3: Executar análise completa
+analysis_results = analyzer.run_analysis("vendas", num_questions=5)
+
+# Abrir o relatório no navegador
 analyzer.open_report(analysis_results["report_path"])
 ```
 
-## Estrutura de Dados
+## Fluxo de Processamento
 
-O OpenAI Analyzer funciona com os seguintes datasets (por padrão):
+1. **Inicialização**:
+   - Carrega configurações e inicializa componentes
+   - Configura logging e integração LLM
 
-- **clientes.csv**: Dados de clientes
-- **vendas.csv**: Dados de vendas realizadas
-- **vendas_perdidas.csv**: Dados de oportunidades de vendas perdidas
+2. **Processamento de Dataset** (opcional):
+   - Lê o dataset usando `DatasetAnalyzer`
+   - Analisa campos e gera metadados
+   - Cria esquema semântico com tipagem e relações
 
-Se esses arquivos não forem encontrados, o analisador criará dados sintéticos para demonstração.
+3. **Geração de Análise**:
+   - Gera perguntas analíticas relevantes usando OpenAI
+   - Executa consultas através do motor de consulta
+   - Analisa resultados e gera insights
 
-## Customização
+4. **Visualização e Relatório**:
+   - Salva visualizações geradas
+   - Cria relatório HTML com todas as análises e gráficos
+   - Gera um resumo executivo da análise
 
-Você pode personalizar o comportamento do analisador modificando os seguintes aspectos:
+## Opções de Linha de Comando
 
-- **Datasets**: Adicione ou modifique arquivos CSV no diretório de dados
-- **Prompt de análise**: Modifique o prompt usado para gerar análises no código-fonte
-- **Estilos de relatório**: Altere o HTML e CSS do relatório no método `generate_html_report`
+| Opção | Descrição |
+|-------|-----------|
+| `--api-key KEY` | Chave de API do OpenAI |
+| `--model MODEL` | Modelo OpenAI a ser utilizado (padrão: "gpt-4") |
+| `--data-dir DIR` | Diretório onde os dados estão armazenados |
+| `--output-dir DIR` | Diretório para salvar relatórios e visualizações |
+| `--dataset PATH` | Caminho para um arquivo de dataset específico |
+| `--dataset-name NAME` | Nome personalizado para o dataset |
+| `--topic TOPIC` | Tópico para análise automática (padrão: "vendas perdidas") |
+| `--questions NUM` | Número de perguntas a serem geradas (padrão: 5) |
+| `--query QUERY` | Executar uma consulta específica |
+| `--open-report` | Abrir relatório no navegador após a análise |
+| `--log-level LEVEL` | Nível de logging (DEBUG, INFO, WARNING, ERROR) |
+| `--process-dataset-only` | Apenas processar o dataset e gerar metadados/esquema |
 
-## Testes
+## Exemplo de Saída
 
-Para executar os testes automatizados:
+### Relatório HTML
 
-```bash
-python test_openai_analyzer.py
-```
+O relatório HTML contém várias seções:
 
-## Limitações
+1. **Resumo da Análise**: Síntese dos principais insights
+2. **Visualizações**: Todas as visualizações geradas com suas análises
+3. **Consultas e Análises**: Todas as consultas executadas e suas análises detalhadas
+4. **Informações Técnicas**: Detalhes sobre o esquema semântico e metadados
 
-- Requer uma chave de API válida do OpenAI
-- O uso excessivo pode resultar em custos com a API do OpenAI
-- A qualidade das análises depende do modelo e dos prompts utilizados
-- Datasets muito grandes podem causar problemas de desempenho
+### Logs
 
-## Contribuições
+O sistema gera vários arquivos de log:
+- `openai_analyzer.log`: Log principal com todas as operações
+- `sql_queries.log`: Registro de todas as consultas SQL executadas
+- `natural_query_engine.log`: Log do motor de consulta
 
-Contribuições são bem-vindas! Para contribuir:
+## Tratamento de Erros
 
-1. Faça um fork do repositório
-2. Crie uma branch para sua feature (`git checkout -b feature/nova-funcionalidade`)
-3. Faça commit das suas mudanças (`git commit -am 'Adiciona nova funcionalidade'`)
-4. Faça push para a branch (`git push origin feature/nova-funcionalidade`)
-5. Abra um Pull Request
+O OpenAI Analyzer inclui tratamento robusto de erros:
+- Fallback para outros modelos de LLM se OpenAI falhar
+- Geração de dados sintéticos quando dados reais não estão disponíveis
+- Backups para análises quando a API falha
+- Logging detalhado para depuração
+
+## Personalização
+
+### Configuração de LLM
+
+O sistema suporta vários modelos LLM:
+- OpenAI (padrão): GPT-4, GPT-3.5-turbo
+- Anthropic: Claude (como fallback)
+- Hugging Face: Modelos transformers
+- Modo Mock: Para testes sem API
+
+### Visualizações Personalizadas
+
+O OpenAI Analyzer suporta vários tipos de visualizações:
+- Gráficos de barras para distribuições categóricas
+- Histogramas para distribuições numéricas
+- Gráficos de linha para tendências temporais
+- Boxplots para análises de correlação
+- Gráficos de pizza para comparações de proporção
+
+## Requisitos
+
+- Python 3.8+
+- pandas
+- numpy
+- matplotlib
+- openai>=1.3.0
+- duckdb
 
 ## Licença
 
 Este projeto está licenciado sob a licença MIT - veja o arquivo LICENSE para detalhes.
+
+## Contribuição
+
+Contribuições são bem-vindas! Por favor, leia as diretrizes de contribuição antes de enviar um pull request.

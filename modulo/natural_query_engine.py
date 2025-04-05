@@ -541,8 +541,7 @@ result = {
             
             # Consultas que retornam DataFrames
             if "mostre" in lower_query and "primeiras" in lower_query and "linhas" in lower_query:
-                df_name = next((name for name in self.dataframes.keys() 
-                               if name in lower_query), list(self.dataframes.keys())[0])
+                df_name = next((name for name in self.dataframes.keys() if name in lower_query), list(self.dataframes.keys())[0])
                 result = self.dataframes[df_name].dataframe.head(5)
                 return DataFrameResponse(result)
                 
@@ -552,12 +551,10 @@ result = {
                     count = len(self.dataframes.get("vendas_perdidas").dataframe)
                     return NumberResponse(count)
                 elif "vendas" in lower_query:
-                    count = len(self.dataframes.get("vendas", 
-                                                  self.dataframes.get("sales_data")).dataframe)
+                    count = len(self.dataframes.get("vendas", self.dataframes.get("sales_data")).dataframe)
                     return NumberResponse(count)
                 elif "clientes" in lower_query:
-                    count = len(self.dataframes.get("clientes", 
-                                                  self.dataframes.get("customers")).dataframe)
+                    count = len(self.dataframes.get("clientes", self.dataframes.get("customers")).dataframe)
                     return NumberResponse(count)
                     
             # Consultas sobre motivos de vendas perdidas
@@ -659,8 +656,7 @@ result = {
                     total = self.dataframes.get("vendas_perdidas").dataframe["ImpactoFinanceiro"].sum()
                     return NumberResponse(total)
                 elif "vendas" in lower_query and "valor" in lower_query:
-                    total = self.dataframes.get("vendas", 
-                                              self.dataframes.get("sales_data")).dataframe["valor"].sum()
+                    total = self.dataframes.get("vendas", self.dataframes.get("sales_data")).dataframe["valor"].sum()
                     return NumberResponse(total)
                     
             # Consultas que geram visualizações
@@ -725,8 +721,7 @@ result = {
                     # Gráfico de pizza para distribuição de motivos
                     elif "pizza" in lower_query and "motivo" in lower_query:
                         motivos = df_perdidas["Motivo"].value_counts()
-                        plt.pie(motivos, labels=motivos.index, autopct='%1.1f%%', 
-                               shadow=True, startangle=90)
+                        plt.pie(motivos, labels=motivos.index, autopct='%1.1f%%', shadow=True, startangle=90)
                         plt.axis('equal')
                         plt.title("Distribuição de Vendas Perdidas por Motivo")
                         plt.tight_layout()
@@ -757,8 +752,7 @@ result = {
                     elif "correlação" in lower_query or "correlacao" in lower_query or "relação" in lower_query:
                         # Boxplot de impacto financeiro por estágio
                         plt.boxplot([df_perdidas[df_perdidas['EstagioPerda'] == estagio]['ImpactoFinanceiro'] 
-                                    for estagio in df_perdidas['EstagioPerda'].unique()],
-                                   labels=df_perdidas['EstagioPerda'].unique())
+                                    for estagio in df_perdidas['EstagioPerda'].unique()], labels=df_perdidas['EstagioPerda'].unique())
                         plt.title('Impacto Financeiro por Estágio de Perda')
                         plt.xlabel('Estágio de Perda')
                         plt.ylabel('Impacto Financeiro (R$)')
