@@ -1,36 +1,15 @@
-# Dependências principais
+# Main dependencies
 pandas>=1.3.0
 numpy>=1.20.0
 matplotlib>=3.4.0
-fastapi>=0.95.0
-uvicorn>=0.15.0
-python-multipart>=0.0.5
+openai>=1.3.0
 duckdb>=0.7.0
+argparse>=1.4.0
 
-# Integrações com LLMs
-openai>=1.3.0  # Para integrações com GPT
-anthropic>=0.2.8  # Para integrações com Claude
-huggingface-hub>=0.21.0  # Para integrações com modelos Hugging Face
-
-# Processamento de dados
-scikit-learn>=1.0.0  # Para análises preditivas e ML
-scipy>=1.7.0  # Para funções estatísticas avançadas
-sympy>=1.8.0  # Para cálculos simbólicos
-statsmodels>=0.13.0  # Para análises temporais
-
-# Visualização
-seaborn>=0.11.0  # Para visualizações estatísticas avançadas
-
-# Utilitários
-tqdm>=4.61.0  # Para barras de progresso
-requests>=2.25.1  # Para requisições HTTP
-pydantic>=1.9.0  # Para validação de dados
-
-# Testes
-pytest>=7.0.0
-pytest-cov>=3.0.0
-httpx>=0.24.0  # Cliente HTTP assíncrono para testes da API
-
-# Documentação
-sphinx>=5.0.0
-sphinx_rtd_theme>=1.0.0
+# Optional dependencies
+seaborn>=0.11.0  # Enhanced visualizations
+jupyter>=1.0.0   # For development and interactivity
+pytest>=6.2.0    # For testing
+flask>=2.0.0     # For API serving (if needed)
+anthropic>=0.3.0  # For Claude model integration
+huggingface-hub>=0.10.0  # For HuggingFace model integration

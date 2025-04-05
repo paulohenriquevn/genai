@@ -138,6 +138,9 @@ class NaturalLanguageQueryEngine:
         # Conectores de dados
         self.connectors = {}
         
+        # Armazena a última consulta executada
+        self.last_query = ""
+        
         # Estado do agente
         self.agent_state = AgentState(
             dfs=[],
@@ -524,6 +527,9 @@ result = {
         from core.response.chart import ChartResponse
         from core.response.error import ErrorResponse
         
+        # Armazena a consulta atual
+        self.last_query = query
+        
         logger.info(f"Processando consulta em linguagem natural: {query}")
         
         # Essa versão simplificada é apenas para demonstração
@@ -542,7 +548,10 @@ result = {
                 
             # Consultas de contagem
             elif "quantos" in lower_query or "conte" in lower_query:
-                if "vendas" in lower_query:
+                if "vendas perdidas" in lower_query or "oportunidades perdidas" in lower_query:
+                    count = len(self.dataframes.get("vendas_perdidas").dataframe)
+                    return NumberResponse(count)
+                elif "vendas" in lower_query:
                     count = len(self.dataframes.get("vendas", 
                                                   self.dataframes.get("sales_data")).dataframe)
                     return NumberResponse(count)
@@ -551,71 +560,289 @@ result = {
                                                   self.dataframes.get("customers")).dataframe)
                     return NumberResponse(count)
                     
+            # Consultas sobre motivos de vendas perdidas
+            elif ("motivo" in lower_query or "motivos" in lower_query) and ("perdidas" in lower_query or "perda" in lower_query):
+                if "comum" in lower_query or "frequente" in lower_query or "principal" in lower_query:
+                    # Encontra o motivo mais comum
+                    df_perdidas = self.dataframes.get("vendas_perdidas").dataframe
+                    motivo_counts = df_perdidas["Motivo"].value_counts()
+                    motivo_mais_comum = motivo_counts.index[0]
+                    quantidade = motivo_counts.iloc[0]
+                    
+                    return StringResponse(f"O motivo mais comum para vendas perdidas é '{motivo_mais_comum}' com {quantidade} ocorrências.")
+                else:
+                    # Retorna dados sobre todos os motivos
+                    df_perdidas = self.dataframes.get("vendas_perdidas").dataframe
+                    motivo_counts = df_perdidas["Motivo"].value_counts().reset_index()
+                    motivo_counts.columns = ["Motivo", "Quantidade"]
+                    
+                    return DataFrameResponse(motivo_counts)
+                    
+            # Consultas sobre estágios de vendas perdidas
+            elif ("estágio" in lower_query or "estagio" in lower_query) and ("perdidas" in lower_query or "perda" in lower_query):
+                df_perdidas = self.dataframes.get("vendas_perdidas").dataframe
+                estagio_counts = df_perdidas["EstagioPerda"].value_counts().reset_index()
+                estagio_counts.columns = ["Estágio", "Quantidade"]
+                
+                return DataFrameResponse(estagio_counts)
+                
+            # Consultas sobre correlação entre estágio e impacto financeiro
+            elif ("correlação" in lower_query or "correlacao" in lower_query or "relação" in lower_query) and ("estágio" in lower_query or "estagio" in lower_query) and "impacto" in lower_query:
+                df_perdidas = self.dataframes.get("vendas_perdidas").dataframe
+                
+                # Calcula médias e desvio padrão por estágio
+                stats_por_estagio = df_perdidas.groupby("EstagioPerda")["ImpactoFinanceiro"].agg(['mean', 'std', 'count']).reset_index()
+                stats_por_estagio.columns = ["Estágio", "Média de Impacto (R$)", "Desvio Padrão (R$)", "Quantidade"]
+                
+                # Formata valores para melhor legibilidade
+                stats_por_estagio["Média de Impacto (R$)"] = stats_por_estagio["Média de Impacto (R$)"].round(2)
+                stats_por_estagio["Desvio Padrão (R$)"] = stats_por_estagio["Desvio Padrão (R$)"].round(2)
+                
+                return DataFrameResponse(stats_por_estagio)
+                
+            # Consultas sobre impacto financeiro por motivo
+            elif "impacto" in lower_query and "motivo" in lower_query and ("perdidas" in lower_query or "perda" in lower_query):
+                df_perdidas = self.dataframes.get("vendas_perdidas").dataframe
+                impacto_por_motivo = df_perdidas.groupby("Motivo")["ImpactoFinanceiro"].agg(['sum', 'mean', 'count']).reset_index()
+                impacto_por_motivo.columns = ["Motivo", "Impacto Total (R$)", "Impacto Médio (R$)", "Quantidade"]
+                
+                # Formata valores e ordena por impacto total
+                impacto_por_motivo["Impacto Total (R$)"] = impacto_por_motivo["Impacto Total (R$)"].round(2)
+                impacto_por_motivo["Impacto Médio (R$)"] = impacto_por_motivo["Impacto Médio (R$)"].round(2)
+                impacto_por_motivo = impacto_por_motivo.sort_values("Impacto Total (R$)", ascending=False)
+                
+                return DataFrameResponse(impacto_por_motivo)
+                
+            # Comparação entre regiões/cidades (simulado, pois não temos dados reais de cidade)
+            elif ("compare" in lower_query or "comparação" in lower_query or "comparacao" in lower_query) and "cidade" in lower_query and ("perdidas" in lower_query or "perda" in lower_query):
+                # Cria dados simulados para demonstrar
+                cidades = ["São Paulo", "Rio de Janeiro", "Belo Horizonte", "Curitiba", "Brasília"]
+                
+                # Gera números simulados baseados nas proporções do dataset real
+                df_perdidas = self.dataframes.get("vendas_perdidas").dataframe
+                total_perdas = len(df_perdidas)
+                
+                # Simula distribuição de perdas por cidade
+                import numpy as np
+                np.random.seed(42)  # Para reprodutibilidade
+                perdas_por_cidade = np.random.multinomial(total_perdas, [0.35, 0.25, 0.15, 0.15, 0.1])
+                
+                df_simulado = pd.DataFrame({
+                    "Cidade": cidades,
+                    "Quantidade de Vendas Perdidas": perdas_por_cidade,
+                    "Percentual do Total": (perdas_por_cidade / total_perdas * 100).round(1)
+                })
+                
+                df_simulado["Percentual do Total"] = df_simulado["Percentual do Total"].astype(str) + '%'
+                
+                return DataFrameResponse(df_simulado)
+                
+            # Consultas sobre feedback de cliente em vendas perdidas
+            elif "feedback" in lower_query and "cliente" in lower_query and ("perdidas" in lower_query or "perda" in lower_query):
+                # Como o feedback é texto livre, podemos mostrar exemplo de feedbacks por motivo
+                df_perdidas = self.dataframes.get("vendas_perdidas").dataframe
+                
+                # Seleciona 2 exemplos de feedback por motivo
+                resultado = []
+                for motivo in df_perdidas["Motivo"].unique():
+                    exemplos = df_perdidas[df_perdidas["Motivo"] == motivo]["FeedbackCliente"].sample(min(2, df_perdidas[df_perdidas["Motivo"] == motivo].shape[0])).tolist()
+                    for exemplo in exemplos:
+                        resultado.append({"Motivo": motivo, "Exemplo de Feedback": exemplo})
+                
+                df_resultado = pd.DataFrame(resultado)
+                
+                return DataFrameResponse(df_resultado)
+            
             # Consultas de valor total/soma
             elif "total" in lower_query or "soma" in lower_query:
-                if "vendas" in lower_query and "valor" in lower_query:
+                if "impacto" in lower_query and ("perdidas" in lower_query or "perda" in lower_query):
+                    total = self.dataframes.get("vendas_perdidas").dataframe["ImpactoFinanceiro"].sum()
+                    return NumberResponse(total)
+                elif "vendas" in lower_query and "valor" in lower_query:
                     total = self.dataframes.get("vendas", 
                                               self.dataframes.get("sales_data")).dataframe["valor"].sum()
                     return NumberResponse(total)
                     
             # Consultas que geram visualizações
             elif any(kw in lower_query for kw in ["gráfico", "visualiza", "plot", "mostre", "crie"]):
-                print(f"DEBUG: Generating visualization for query: {query}")  # Debug info
                 import matplotlib.pyplot as plt
                 import io
                 import base64
+                import pandas as pd
+                import numpy as np
+                from datetime import datetime, timedelta
+                
+                # Configura o estilo
+                plt.style.use('seaborn-v0_8-darkgrid')
                 
                 # Cria um gráfico simples
                 plt.figure(figsize=(10, 6))
                 
-                # Gráfico de barras
-                if "barras" in lower_query or ("total" in lower_query and "cliente" in lower_query) or "vendas por cliente" in lower_query:
-                    # This debug line will help us track what's happening
-                    print("DEBUG: Generating bar chart for client sales")
-                    df = self.dataframes.get("vendas", self.dataframes.get("sales_data")).dataframe
-                    client_totals = df.groupby("id_cliente")["valor"].sum()
-                    client_totals.plot(kind="bar")
-                    plt.title("Total de vendas por cliente")
-                    plt.xlabel("ID do Cliente")
-                    plt.ylabel("Total de Vendas")
-                    plt.xticks(rotation=45)
-                    plt.tight_layout()
-                # Histograma
-                elif "histograma" in lower_query:
-                    if "vendas" in lower_query:
-                        df = self.dataframes.get("vendas", self.dataframes.get("sales_data")).dataframe
-                        df["valor"].hist(bins=15)
-                        plt.title("Histograma de valores de vendas")
-                        plt.xlabel("Valor")
+                # GRÁFICOS PARA VENDAS PERDIDAS
+                if "perdidas" in lower_query or "perda" in lower_query:
+                    df_perdidas = self.dataframes.get("vendas_perdidas").dataframe
+                    
+                    # Gráfico de barras para vendas perdidas por motivo
+                    if "motivo" in lower_query or "barras" in lower_query:
+                        motivo_counts = df_perdidas["Motivo"].value_counts()
+                        motivo_counts.plot(kind="bar", color="indianred")
+                        plt.title("Contagem de Vendas Perdidas por Motivo")
+                        plt.xlabel("Motivo")
+                        plt.ylabel("Quantidade")
+                        plt.xticks(rotation=45)
+                        plt.tight_layout()
+                    
+                    # Gráfico de barras para impacto financeiro por motivo
+                    elif "impacto" in lower_query and "motivo" in lower_query:
+                        impacto_por_motivo = df_perdidas.groupby("Motivo")["ImpactoFinanceiro"].sum()
+                        impacto_por_motivo.plot(kind="bar", color="firebrick")
+                        plt.title("Impacto Financeiro Total por Motivo de Perda")
+                        plt.xlabel("Motivo")
+                        plt.ylabel("Impacto Financeiro (R$)")
+                        plt.xticks(rotation=45)
+                        plt.tight_layout()
+                    
+                    # Gráfico de barras para vendas perdidas por estágio
+                    elif "estágio" in lower_query or "estagio" in lower_query:
+                        estagio_counts = df_perdidas["EstagioPerda"].value_counts()
+                        estagio_counts.plot(kind="bar", color="darkblue")
+                        plt.title("Contagem de Vendas Perdidas por Estágio")
+                        plt.xlabel("Estágio de Perda")
+                        plt.ylabel("Quantidade")
+                        plt.xticks(rotation=45)
+                        plt.tight_layout()
+                        
+                    # Histograma de impacto financeiro
+                    elif "histograma" in lower_query and "impacto" in lower_query:
+                        plt.hist(df_perdidas["ImpactoFinanceiro"], bins=15, color="darkred", alpha=0.7, 
+                                edgecolor="black")
+                        plt.title("Distribuição do Impacto Financeiro de Vendas Perdidas")
+                        plt.xlabel("Impacto Financeiro (R$)")
                         plt.ylabel("Frequência")
                         plt.grid(False)
                         plt.tight_layout()
-                # Gráfico de linha
-                elif "linha" in lower_query or "temporal" in lower_query or "evolução" in lower_query:
-                    df = self.dataframes.get("vendas", self.dataframes.get("sales_data")).dataframe
-                    # Certifica que temos uma coluna de data
-                    if "data_venda" in df.columns:
-                        date_col = "data_venda"
-                    elif "data" in df.columns:
-                        date_col = "data"
-                    else:
-                        # Usa o índice se não houver coluna de data
-                        df = df.set_index(pd.date_range(start='2023-01-01', periods=len(df)))
-                        date_col = df.index
+                    
+                    # Gráfico de pizza para distribuição de motivos
+                    elif "pizza" in lower_query and "motivo" in lower_query:
+                        motivos = df_perdidas["Motivo"].value_counts()
+                        plt.pie(motivos, labels=motivos.index, autopct='%1.1f%%', 
+                               shadow=True, startangle=90)
+                        plt.axis('equal')
+                        plt.title("Distribuição de Vendas Perdidas por Motivo")
+                        plt.tight_layout()
+                    
+                    # Gráfico de linha temporal
+                    elif "linha" in lower_query or "temporal" in lower_query or "evolução" in lower_query or "tendência" in lower_query or "tendencia" in lower_query:
+                        # Criar uma coluna de data simulada já que vendas_perdidas não tem
+                        # Para fins de demonstração, vamos criar datas dos últimos 150 dias
+                        hoje = datetime.now()
+                        datas = [(hoje - timedelta(days=i)).strftime('%Y-%m-%d') for i in range(len(df_perdidas))]
+                        df_temp = df_perdidas.copy()
+                        df_temp['DataSimulada'] = datas
+                        df_temp['DataSimulada'] = pd.to_datetime(df_temp['DataSimulada'])
                         
-                    # Agrupa por data
-                    if date_col != df.index:
-                        df = df.sort_values(by=date_col)
-                        time_series = df.groupby(date_col)["valor"].sum()
-                        time_series.plot(kind="line")
-                    else:
-                        df["valor"].plot(kind="line")
+                        # Agrupa por semana
+                        df_temp['Semana'] = df_temp['DataSimulada'].dt.isocalendar().week
+                        perdas_por_semana = df_temp.groupby('Semana')['ImpactoFinanceiro'].sum()
                         
-                    plt.title("Evolução de vendas ao longo do tempo")
-                    plt.xlabel("Data")
-                    plt.ylabel("Valor Total")
-                    plt.grid(True, alpha=0.3)
-                    plt.tight_layout()
+                        # Plota o gráfico de linha
+                        perdas_por_semana.plot(kind='line', marker='o', color='darkred')
+                        plt.title('Tendência de Impacto Financeiro de Vendas Perdidas por Semana')
+                        plt.xlabel('Semana do Ano')
+                        plt.ylabel('Impacto Financeiro Total (R$)')
+                        plt.grid(True, alpha=0.3)
+                        plt.tight_layout()
+                    
+                    # Correlação entre estágio e impacto financeiro
+                    elif "correlação" in lower_query or "correlacao" in lower_query or "relação" in lower_query:
+                        # Boxplot de impacto financeiro por estágio
+                        plt.boxplot([df_perdidas[df_perdidas['EstagioPerda'] == estagio]['ImpactoFinanceiro'] 
+                                    for estagio in df_perdidas['EstagioPerda'].unique()],
+                                   labels=df_perdidas['EstagioPerda'].unique())
+                        plt.title('Impacto Financeiro por Estágio de Perda')
+                        plt.xlabel('Estágio de Perda')
+                        plt.ylabel('Impacto Financeiro (R$)')
+                        plt.grid(True, alpha=0.3)
+                        plt.tight_layout()
+                    
+                    # Comparação de médias de impacto financeiro por motivo
+                    elif "comparação" in lower_query or "comparacao" in lower_query or "compare" in lower_query:
+                        media_por_motivo = df_perdidas.groupby('Motivo')['ImpactoFinanceiro'].mean().sort_values(ascending=False)
+                        media_por_motivo.plot(kind='bar', color='darkblue')
+                        plt.title('Impacto Financeiro Médio por Motivo')
+                        plt.xlabel('Motivo')
+                        plt.ylabel('Impacto Financeiro Médio (R$)')
+                        plt.xticks(rotation=45)
+                        plt.tight_layout()
+                    
+                    else:
+                        # Gráfico padrão para vendas perdidas - impacto por motivo
+                        impacto_por_motivo = df_perdidas.groupby("Motivo")["ImpactoFinanceiro"].sum().sort_values(ascending=False)
+                        impacto_por_motivo.plot(kind="bar", color="firebrick")
+                        plt.title("Impacto Financeiro Total por Motivo de Perda")
+                        plt.xlabel("Motivo")
+                        plt.ylabel("Impacto Financeiro (R$)")
+                        plt.xticks(rotation=45)
+                        plt.tight_layout()
+                
+                # GRÁFICOS PARA VENDAS
+                else:
+                    # Gráfico de barras
+                    if "barras" in lower_query or ("total" in lower_query and "cliente" in lower_query) or "vendas por cliente" in lower_query:
+                        df = self.dataframes.get("vendas", self.dataframes.get("sales_data")).dataframe
+                        client_totals = df.groupby("id_cliente")["valor"].sum()
+                        client_totals.plot(kind="bar", color="royalblue")
+                        plt.title("Total de vendas por cliente")
+                        plt.xlabel("ID do Cliente")
+                        plt.ylabel("Total de Vendas (R$)")
+                        plt.xticks(rotation=45)
+                        plt.tight_layout()
+                    
+                    # Histograma
+                    elif "histograma" in lower_query:
+                        df = self.dataframes.get("vendas", self.dataframes.get("sales_data")).dataframe
+                        plt.hist(df["valor"], bins=15, color="skyblue", edgecolor="black")
+                        plt.title("Histograma de valores de vendas")
+                        plt.xlabel("Valor (R$)")
+                        plt.ylabel("Frequência")
+                        plt.grid(False)
+                        plt.tight_layout()
+                    
+                    # Gráfico de linha
+                    elif "linha" in lower_query or "temporal" in lower_query or "evolução" in lower_query:
+                        df = self.dataframes.get("vendas", self.dataframes.get("sales_data")).dataframe
+                        
+                        # Certifica que temos uma coluna de data
+                        date_col = None
+                        if "data_venda" in df.columns:
+                            date_col = "data_venda"
+                            df[date_col] = pd.to_datetime(df[date_col])
+                        elif "data" in df.columns:
+                            date_col = "data"
+                            df[date_col] = pd.to_datetime(df[date_col])
+                        
+                        if date_col is not None:
+                            # Agrupa por data
+                            df = df.sort_values(by=date_col)
+                            time_series = df.groupby(pd.Grouper(key=date_col, freq='D'))["valor"].sum()
+                            time_series.plot(kind="line", marker='o', color="royalblue")
+                            plt.title("Evolução de vendas ao longo do tempo")
+                            plt.xlabel("Data")
+                            plt.ylabel("Valor Total (R$)")
+                            plt.grid(True, alpha=0.3)
+                            plt.tight_layout()
+                        else:
+                            # Usa o índice se não houver coluna de data
+                            dates = pd.date_range(start='2023-01-01', periods=len(df))
+                            df_temp = df.copy()
+                            df_temp['data_simulada'] = dates
+                            df_temp.set_index('data_simulada', inplace=True)
+                            df_temp["valor"].plot(kind="line", marker='o', color="royalblue")
+                            plt.title("Evolução de vendas (datas simuladas)")
+                            plt.xlabel("Data")
+                            plt.ylabel("Valor (R$)")
+                            plt.grid(True, alpha=0.3)
+                            plt.tight_layout()
                 
                 # Salva o gráfico em uma string base64
                 buffer = io.BytesIO()
