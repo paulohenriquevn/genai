@@ -6,6 +6,7 @@ import os
 import logging
 import pandas as pd
 import time
+import json
 from typing import Dict, List, Optional, Any, Union
 
 # Importação dos componentes core
@@ -881,3 +882,64 @@ class AnalysisEngine:
             sanitized_query = re.sub(pattern, "[REMOVIDO]", sanitized_query, flags=re.IGNORECASE)
         
         return sanitized_query
+        
+    def generate_analysis(self, result: BaseResponse, query: str) -> str:
+        """
+        Gera uma análise automatizada do resultado de uma consulta.
+        
+        Args:
+            result: Objeto de resposta obtido
+            query: Consulta original
+            
+        Returns:
+            str: Texto com análise do resultado
+        """
+        if result.type == "dataframe":
+            df = result.value
+            analysis = [f"A consulta retornou {len(df)} registros com {len(df.columns)} colunas."]
+            
+            # Análise adicional se tivermos poucas linhas
+            if len(df) <= 10:
+                analysis.append("Conjunto de resultados pequeno, pode ser necessário expandir a consulta para obter mais dados.")
+                
+            # Verifica valores nulos
+            null_counts = df.isnull().sum()
+            if null_counts.any():
+                cols_with_nulls = [f"{col} ({null_counts[col]} valores)" for col in null_counts.index if null_counts[col] > 0]
+                if cols_with_nulls:
+                    analysis.append(f"Colunas com valores nulos: {', '.join(cols_with_nulls)}")
+                    
+            # Verifica colunas numéricas
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            if numeric_cols:
+                # Calcula estatísticas básicas para colunas numéricas
+                stats = df[numeric_cols].describe().to_dict()
+                for col in numeric_cols[:2]:  # Limita a 2 colunas para não sobrecarregar
+                    col_stats = stats[col]
+                    analysis.append(f"Estatísticas para '{col}': Min={col_stats['min']:.2f}, Média={col_stats['mean']:.2f}, Max={col_stats['max']:.2f}")
+            
+            return "\n".join(analysis)
+            
+        elif result.type == "chart":
+            analysis = [f"Visualização gerada com base na consulta: '{query}'."]
+            
+            # Se temos informações de séries no gráfico
+            if result.chart_format == "apex" and isinstance(result.value, dict):
+                config = result.value
+                if "series" in config:
+                    series_count = len(config["series"]) if isinstance(config["series"], list) else 1
+                    analysis.append(f"O gráfico contém {series_count} série(s) de dados.")
+                    
+                if "title" in config and "text" in config["title"]:
+                    analysis.append(f"Título do gráfico: {config['title']['text']}.")
+                    
+            return "\n".join(analysis)
+            
+        elif result.type == "number":
+            return f"O valor numérico obtido foi {result.value}."
+            
+        elif result.type == "string":
+            return f"A resposta obtida é: '{result.value[:100]}{'...' if len(result.value) > 100 else ''}'."
+            
+        else:
+            return f"Consulta processada com sucesso."
