@@ -234,7 +234,25 @@ class LLMIntegration:
         system_message = """Você é um assistente especializado em gerar código Python para análise de dados.
         Sempre use 'execute_sql_query' para executar consultas SQL.
         Defina sempre um resultado com a estrutura: {"type": tipo, "value": valor}
-        onde tipo é um dos seguintes: "string", "number", "dataframe", ou "plot".
+        onde tipo é um dos seguintes: "string", "number", "dataframe", ou "chart".
+        
+        Para visualizações, use o formato ApexCharts para criar gráficos interativos:
+        result = {
+            "type": "chart",
+            "value": {
+                "format": "apex",
+                "config": {
+                    "chart": {"type": "bar"},  # ou "line", "pie", "scatter", "area", "radar", etc.
+                    "series": [...],           # dados para o gráfico
+                    "xaxis": {"categories": [...]},
+                    "title": {"text": "Título do Gráfico"}
+                }
+            }
+        }
+        
+        Quando o usuário pedir visualizações ou gráficos, SEMPRE use o formato ApexCharts acima.
+        Exemplos de prompt que pedem visualização: "Visualize os dados", "Mostre um gráfico", "Crie uma visualização", etc.
+        
         Forneça apenas o código Python, sem explicações adicionais."""
         
         try:
@@ -266,8 +284,24 @@ class LLMIntegration:
         enhanced_prompt = f"""Gere código Python para análise de dados com as seguintes características:
         - Use 'execute_sql_query' para consultas SQL
         - Defina um resultado com a estrutura: {{"type": tipo, "value": valor}}
-        - Tipos possíveis: "string", "number", "dataframe", ou "plot"
+        - Tipos possíveis: "string", "number", "dataframe", ou "chart"
         - Apenas o código Python, sem explicações
+        
+        Para visualizações, use o formato ApexCharts para criar gráficos interativos:
+        result = {{
+            "type": "chart",
+            "value": {{
+                "format": "apex",
+                "config": {{
+                    "chart": {{"type": "bar"}},  # ou "line", "pie", "scatter", "area", "radar", etc.
+                    "series": [...],           # dados para o gráfico
+                    "xaxis": {{"categories": [...]}},
+                    "title": {{"text": "Título do Gráfico"}}
+                }}
+            }}
+        }}
+        
+        Quando o usuário pedir visualizações ou gráficos, SEMPRE use o formato ApexCharts acima.
         
         CONSULTA:
         {prompt}
@@ -304,7 +338,25 @@ class LLMIntegration:
         system_message = """Você é um assistente especializado em gerar código Python para análise de dados.
         Sempre use 'execute_sql_query' para executar consultas SQL.
         Defina sempre um resultado com a estrutura: {"type": tipo, "value": valor}
-        onde tipo é um dos seguintes: "string", "number", "dataframe", ou "plot".
+        onde tipo é um dos seguintes: "string", "number", "dataframe", ou "chart".
+        
+        Para visualizações, use o formato ApexCharts para criar gráficos interativos:
+        result = {
+            "type": "chart",
+            "value": {
+                "format": "apex",
+                "config": {
+                    "chart": {"type": "bar"},  # ou "line", "pie", "scatter", "area", "radar", etc.
+                    "series": [...],           # dados para o gráfico
+                    "xaxis": {"categories": [...]},
+                    "title": {"text": "Título do Gráfico"}
+                }
+            }
+        }
+        
+        Quando o usuário pedir visualizações ou gráficos, SEMPRE use o formato ApexCharts acima.
+        Exemplos de prompt que pedem visualização: "Visualize os dados", "Mostre um gráfico", "Crie uma visualização", etc.
+        
         Forneça apenas o código Python, sem explicações adicionais."""
         
         try:
@@ -336,8 +388,24 @@ class LLMIntegration:
         enhanced_prompt = f"""Gere código Python para análise de dados com as seguintes características:
         - Use 'execute_sql_query' para consultas SQL
         - Defina um resultado com a estrutura: {{"type": tipo, "value": valor}}
-        - Tipos possíveis: "string", "number", "dataframe", ou "plot"
+        - Tipos possíveis: "string", "number", "dataframe", ou "chart"
         - Apenas o código Python, sem explicações
+        
+        Para visualizações, use o formato ApexCharts para criar gráficos interativos:
+        result = {{
+            "type": "chart",
+            "value": {{
+                "format": "apex",
+                "config": {{
+                    "chart": {{"type": "bar"}},  # ou "line", "pie", "scatter", "area", "radar", etc.
+                    "series": [...],           # dados para o gráfico
+                    "xaxis": {{"categories": [...]}},
+                    "title": {{"text": "Título do Gráfico"}}
+                }}
+            }}
+        }}
+        
+        Quando o usuário pedir visualizações ou gráficos, SEMPRE use o formato ApexCharts acima.
         
         CONSULTA:
         {prompt}
@@ -359,7 +427,51 @@ class LLMIntegration:
     
     def _generate_fallback(self, prompt: str) -> str:
         """Gera um código fallback básico quando tudo falha"""
-        return """
+        # Verifica se o prompt parece estar pedindo uma visualização
+        visualization_keywords = ["gráfico", "chart", "plot", "visualização", "visualize", 
+                                  "mostr", "exib", "gere uma visualização", "crie um gráfico"]
+        
+        is_viz_request = any(keyword in prompt.lower() for keyword in visualization_keywords)
+        
+        if is_viz_request:
+            # Fallback para solicitação de visualização (usando ApexCharts)
+            return """
+import pandas as pd
+
+# Consulta simples para fallback de visualização
+df_result = execute_sql_query('''
+    SELECT * FROM vendas
+    LIMIT 10
+''')
+
+# Prepara dados para o gráfico (usando as primeiras duas colunas numéricas)
+numeric_cols = df_result.select_dtypes(include=['number']).columns.tolist()
+if len(numeric_cols) >= 1:
+    y_column = numeric_cols[0]
+    
+    # Define um resultado com gráfico ApexCharts
+    result = {
+        "type": "chart",
+        "value": {
+            "format": "apex",
+            "config": {
+                "chart": {"type": "bar"},
+                "series": [{"name": y_column, "data": df_result[y_column].tolist()}],
+                "xaxis": {"categories": [str(x) for x in range(len(df_result))]},
+                "title": {"text": "Visualização dos Dados"}
+            }
+        }
+    }
+else:
+    # Fallback caso não haja colunas numéricas
+    result = {
+        "type": "string",
+        "value": f"Não foi possível gerar visualização. Dados disponíveis: {len(df_result)} registros."
+    }
+"""
+        else:
+            # Fallback padrão para outros tipos de consultas
+            return """
 import pandas as pd
 
 # Consulta simples para fallback

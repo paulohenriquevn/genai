@@ -28,7 +28,92 @@ import pandas as pd
 
 At the end, declare "result" variable as a dictionary of type and value.
 
+### ApexCharts for Interactive Visualizations
+You can now create beautiful interactive charts using ApexCharts format. Here are some examples:
+
+#### Bar Chart Example
+```python
+def generate_bar_chart(df):
+    # Execute SQL query to get sales by month
+    sales_by_month = execute_sql_query("""
+        SELECT strftime('%Y-%m', date) as month, SUM(amount) as total_sales
+        FROM sales
+        GROUP BY month
+        ORDER BY month
+    """)
+    
+    # Return ApexCharts configuration
+    result = {
+        "type": "chart",
+        "value": {
+            "format": "apex",
+            "config": {
+                "chart": {"type": "bar"},
+                "series": [{"name": "Sales", "data": sales_by_month['total_sales'].tolist()}],
+                "xaxis": {"categories": sales_by_month['month'].tolist()},
+                "title": {"text": "Monthly Sales"}
+            }
+        }
+    }
+    return result
+```
+
+#### Line Chart Example
+```python
+def generate_line_chart(df):
+    # Process data with SQL
+    monthly_data = execute_sql_query("""
+        SELECT strftime('%Y-%m', date) as month, 
+               AVG(temperature) as avg_temp
+        FROM weather
+        GROUP BY month
+        ORDER BY month
+    """)
+    
+    # Create ApexCharts configuration
+    result = {
+        "type": "chart",
+        "value": {
+            "format": "apex",
+            "config": {
+                "chart": {"type": "line"},
+                "series": [{"name": "Temperature", "data": monthly_data['avg_temp'].tolist()}],
+                "xaxis": {"categories": monthly_data['month'].tolist()},
+                "title": {"text": "Average Monthly Temperature"}
+            }
+        }
+    }
+    return result
+```
+
+#### Pie Chart Example
+```python
+def generate_pie_chart(df):
+    # Get data for pie chart
+    category_data = execute_sql_query("""
+        SELECT category, SUM(value) as total
+        FROM expenses
+        GROUP BY category
+        ORDER BY total DESC
+        LIMIT 5
+    """)
+    
+    # Return ApexCharts configuration
+    result = {
+        "type": "chart",
+        "value": {
+            "format": "apex",
+            "config": {
+                "chart": {"type": "pie"},
+                "series": category_data['total'].tolist(),
+                "labels": category_data['category'].tolist(),
+                "title": {"text": "Expenses by Category"}
+            }
+        }
+    }
+    return result
+```
 
 Generate python code and return full updated code:
 
-### Note: Use only relevant table for query and do aggregation, sorting, joins and grouby through sql query
+### Note: Use only relevant table for query and do aggregation, sorting, joins and grouby through sql query. When creating visualizations, prefer ApexCharts format for interactive charts.

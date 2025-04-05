@@ -513,8 +513,19 @@ class AnalysisEngine:
         """
         # Se já estiver no formato esperado
         if isinstance(result, dict) and "type" in result and "value" in result:
-            # Verifica se o tipo é 'plot' e o valor não é uma string de caminho válido
-            if result["type"] == "plot":
+            # Verifica se é um gráfico
+            if result["type"] == "chart":
+                # Suporte a format apex
+                if isinstance(result["value"], dict) and "format" in result["value"]:
+                    if result["value"]["format"] == "apex" and "config" in result["value"]:
+                        # Já está no formato correto para ApexCharts
+                        return result
+                
+                # Compatibilidade com parâmetro antigo 'plot'
+                return {"type": "chart", "value": result["value"]}
+                
+            # Compatibilidade com tipo 'plot' antigo
+            elif result["type"] == "plot":
                 value = result["value"]
                 if not isinstance(value, str) or (not value.endswith(('.png', '.jpg', '.svg', '.pdf')) and "data:image" not in value):
                     # Tenta salvar a imagem se for uma figura matplotlib
@@ -532,6 +543,9 @@ class AnalysisEngine:
                     except Exception as e:
                         logger.error(f"Erro ao processar visualização: {str(e)}")
                         return {"type": "string", "value": f"Erro ao processar visualização: {str(e)}"}
+                
+                # Converte 'plot' antigo para 'chart' com formato 'image'
+                return {"type": "chart", "value": result["value"]}
             
             return result
         
@@ -543,9 +557,18 @@ class AnalysisEngine:
         elif isinstance(result, str):
             # Verifica se parece ser um caminho para um plot
             if result.endswith(('.png', '.jpg', '.svg', '.pdf')) or "data:image" in result:
-                return {"type": "plot", "value": result}
+                return {"type": "chart", "value": result}
             else:
                 return {"type": "string", "value": result}
+        elif isinstance(result, dict) and "chart" in result and "series" in result:
+            # Detecta um possível config do ApexCharts direto
+            return {
+                "type": "chart", 
+                "value": {
+                    "format": "apex",
+                    "config": result
+                }
+            }
         else:
             # Verifica se é uma figura matplotlib
             try:
@@ -554,7 +577,7 @@ class AnalysisEngine:
                     filename = f"plot_{int(time.time())}.png"
                     plt.savefig(filename)
                     plt.close()
-                    return {"type": "plot", "value": filename}
+                    return {"type": "chart", "value": filename}
             except:
                 pass
                 
@@ -599,10 +622,49 @@ class AnalysisEngine:
         x: Optional[str] = None, 
         y: Optional[str] = None,
         title: Optional[str] = None,
-        save_path: Optional[str] = None
+        save_path: Optional[str] = None,
+        chart_format: str = "apex",
+        options: Optional[Dict[str, Any]] = None
     ) -> ChartResponse:
         """
         Gera uma visualização a partir de um DataFrame.
+        
+        Args:
+            data: DataFrame ou Series para visualização
+            chart_type: Tipo de gráfico (bar, line, scatter, hist, pie, area, heatmap, radar)
+            x: Coluna para eixo x (opcional)
+            y: Coluna para eixo y (opcional)
+            title: Título do gráfico (opcional)
+            save_path: Caminho para salvar o gráfico (opcional)
+            chart_format: Formato do gráfico ('image' para matplotlib ou 'apex' para ApexCharts)
+            options: Opções adicionais de customização (opcional)
+            
+        Returns:
+            ChartResponse com a visualização
+        """
+        try:
+            # Verifica o formato do gráfico
+            if chart_format == "apex":
+                return self._generate_apex_chart(data, chart_type, x, y, title, options)
+            elif chart_format == "image":
+                return self._generate_matplotlib_chart(data, chart_type, x, y, title, save_path)
+            else:
+                raise ValueError(f"Formato de gráfico não suportado: {chart_format}")
+        except Exception as e:
+            logger.error(f"Erro ao gerar gráfico: {str(e)}")
+            raise ValueError(f"Falha ao gerar gráfico: {str(e)}")
+    
+    def _generate_matplotlib_chart(
+        self, 
+        data: Union[pd.DataFrame, pd.Series], 
+        chart_type: str, 
+        x: Optional[str] = None, 
+        y: Optional[str] = None,
+        title: Optional[str] = None,
+        save_path: Optional[str] = None
+    ) -> ChartResponse:
+        """
+        Gera uma visualização com matplotlib a partir de um DataFrame.
         
         Args:
             data: DataFrame ou Series para visualização
@@ -613,70 +675,179 @@ class AnalysisEngine:
             save_path: Caminho para salvar o gráfico (opcional)
             
         Returns:
-            ChartResponse com a visualização
+            ChartResponse com a visualização em formato de imagem
         """
-        try:
-            import matplotlib.pyplot as plt
-            
-            # Configura o gráfico
-            plt.figure(figsize=(10, 6))
-            
-            # Determina o tipo de gráfico
-            if chart_type == 'bar':
-                if x and y:
-                    data.plot(kind='bar', x=x, y=y)
-                else:
-                    data.plot(kind='bar')
-            elif chart_type == 'line':
-                if x and y:
-                    data.plot(kind='line', x=x, y=y)
-                else:
-                    data.plot(kind='line')
-            elif chart_type == 'scatter':
-                if x and y:
-                    data.plot(kind='scatter', x=x, y=y)
-                else:
-                    # Scatter requer x e y
-                    raise ValueError("Scatter plot requer especificação de x e y")
-            elif chart_type == 'hist':
-                if y:
-                    data[y].plot(kind='hist')
-                else:
-                    data.plot(kind='hist')
-            elif chart_type == 'boxplot':
-                data.boxplot()
-            elif chart_type == 'pie':
-                if y:
-                    data.plot(kind='pie', y=y)
-                else:
-                    data.plot(kind='pie')
+        import matplotlib.pyplot as plt
+        
+        # Configura o gráfico
+        plt.figure(figsize=(10, 6))
+        
+        # Determina o tipo de gráfico
+        if chart_type == 'bar':
+            if x and y:
+                data.plot(kind='bar', x=x, y=y)
             else:
-                raise ValueError(f"Tipo de gráfico não suportado: {chart_type}")
+                data.plot(kind='bar')
+        elif chart_type == 'line':
+            if x and y:
+                data.plot(kind='line', x=x, y=y)
+            else:
+                data.plot(kind='line')
+        elif chart_type == 'scatter':
+            if x and y:
+                data.plot(kind='scatter', x=x, y=y)
+            else:
+                # Scatter requer x e y
+                raise ValueError("Scatter plot requer especificação de x e y")
+        elif chart_type == 'hist':
+            if y:
+                data[y].plot(kind='hist')
+            else:
+                data.plot(kind='hist')
+        elif chart_type == 'boxplot':
+            data.boxplot()
+        elif chart_type == 'pie':
+            if y:
+                data.plot(kind='pie', y=y)
+            else:
+                data.plot(kind='pie')
+        else:
+            raise ValueError(f"Tipo de gráfico não suportado para matplotlib: {chart_type}")
+        
+        # Adiciona título se fornecido
+        if title:
+            plt.title(title)
+        
+        # Ajusta o layout
+        plt.tight_layout()
+        
+        # Determina caminho para salvar
+        if not save_path:
+            # Gera nome baseado no tipo e título
+            title_slug = "chart" if not title else title.replace(" ", "_").lower()
+            save_path = f"{title_slug}_{chart_type}.png"
+        
+        # Salva o gráfico
+        plt.savefig(save_path)
+        plt.close()
+        
+        # Retorna resposta com o caminho
+        logger.info(f"Gráfico matplotlib gerado e salvo em: {save_path}")
+        return ChartResponse(save_path, chart_format="image")
+    
+    def _generate_apex_chart(
+        self, 
+        data: Union[pd.DataFrame, pd.Series], 
+        chart_type: str, 
+        x: Optional[str] = None, 
+        y: Optional[str] = None,
+        title: Optional[str] = None,
+        options: Optional[Dict[str, Any]] = None
+    ) -> ChartResponse:
+        """
+        Gera uma visualização com ApexCharts a partir de um DataFrame.
+        
+        Args:
+            data: DataFrame ou Series para visualização
+            chart_type: Tipo de gráfico (bar, line, scatter, pie, area, heatmap, radar)
+            x: Coluna para eixo x (opcional)
+            y: Coluna para eixo y (opcional)
+            title: Título do gráfico (opcional)
+            options: Opções adicionais de customização (opcional)
             
-            # Adiciona título se fornecido
-            if title:
-                plt.title(title)
-            
-            # Ajusta o layout
-            plt.tight_layout()
-            
-            # Determina caminho para salvar
-            if not save_path:
-                # Gera nome baseado no tipo e título
-                title_slug = "chart" if not title else title.replace(" ", "_").lower()
-                save_path = f"{title_slug}_{chart_type}.png"
-            
-            # Salva o gráfico
-            plt.savefig(save_path)
-            plt.close()
-            
-            # Retorna resposta com o caminho
-            logger.info(f"Gráfico gerado e salvo em: {save_path}")
-            return ChartResponse(save_path)
-            
-        except Exception as e:
-            logger.error(f"Erro ao gerar gráfico: {str(e)}")
-            raise ValueError(f"Falha ao gerar gráfico: {str(e)}")
+        Returns:
+            ChartResponse com a configuração JSON do ApexCharts
+        """
+        # Importa o conversor de ApexCharts
+        from utils.chart_converters import ApexChartsConverter
+        
+        # Converte Series para DataFrame se necessário
+        if isinstance(data, pd.Series):
+            data = data.to_frame()
+        
+        # Valida os parâmetros
+        if not isinstance(data, pd.DataFrame):
+            raise ValueError("Os dados devem ser um DataFrame ou Series do pandas")
+        
+        if x is not None and x not in data.columns:
+            raise ValueError(f"Coluna {x} não encontrada no DataFrame")
+        
+        if y is not None and isinstance(y, str) and y not in data.columns:
+            raise ValueError(f"Coluna {y} não encontrada no DataFrame")
+        
+        if y is not None and isinstance(y, list):
+            missing_cols = [col for col in y if col not in data.columns]
+            if missing_cols:
+                raise ValueError(f"Colunas não encontradas no DataFrame: {', '.join(missing_cols)}")
+        
+        # Determina o tipo de gráfico e gera a configuração
+        config = None
+        
+        if chart_type == 'line':
+            if not x or not y:
+                raise ValueError("Gráfico de linhas requer especificação de colunas x e y")
+            config = ApexChartsConverter.convert_line_chart(data, x, y, title, options)
+        
+        elif chart_type == 'bar':
+            if not x or not y:
+                raise ValueError("Gráfico de barras requer especificação de colunas x e y")
+            # Verifica se é um gráfico de barras horizontais
+            horizontal = options.get('horizontal', False) if options else False
+            # Verifica se é um gráfico empilhado
+            stacked = options.get('stacked', False) if options else False
+            config = ApexChartsConverter.convert_bar_chart(data, x, y, title, stacked, horizontal, options)
+        
+        elif chart_type == 'pie':
+            labels_col = x if x else data.columns[0]  # Primeira coluna como labels por padrão
+            values_col = y if y and isinstance(y, str) else data.columns[1] if len(data.columns) > 1 else data.columns[0]
+            # Verifica se é um gráfico de donut
+            donut = options.get('donut', False) if options else False
+            config = ApexChartsConverter.convert_pie_chart(data, labels_col, values_col, title, donut, options)
+        
+        elif chart_type == 'scatter':
+            if not x or not y:
+                raise ValueError("Gráfico de dispersão requer especificação de colunas x e y")
+            # Opcionalmente, permite coluna para tamanho e agrupamento
+            size_col = options.get('size_col', None) if options else None
+            group_col = options.get('group_col', None) if options else None
+            config = ApexChartsConverter.convert_scatter_chart(data, x, y, size_col, group_col, title, options)
+        
+        elif chart_type == 'area':
+            if not x or not y:
+                raise ValueError("Gráfico de área requer especificação de colunas x e y")
+            # Verifica se é um gráfico empilhado
+            stacked = options.get('stacked', False) if options else False
+            config = ApexChartsConverter.convert_area_chart(data, x, y, title, stacked, options)
+        
+        elif chart_type == 'heatmap':
+            if not x or not y:
+                raise ValueError("Mapa de calor requer especificação de colunas x e y")
+            # Requer também uma coluna para os valores
+            values_col = options.get('values_col', None) if options else None
+            if not values_col and len(data.columns) > 2:
+                # Tenta usar a terceira coluna como valores por padrão
+                values_col = data.columns[2]
+            if not values_col:
+                raise ValueError("Mapa de calor requer especificação de coluna para valores")
+            # Opcionalmente, permite uma escala de cores personalizada
+            color_scale = options.get('color_scale', None) if options else None
+            config = ApexChartsConverter.convert_heatmap(data, x, y, values_col, title, color_scale, options)
+        
+        elif chart_type == 'radar':
+            if not x:
+                raise ValueError("Gráfico de radar requer especificação de coluna para categorias")
+            # y pode ser uma coluna ou lista de colunas para séries
+            series_cols = y if y else data.columns[1:] if len(data.columns) > 1 else None
+            if not series_cols:
+                raise ValueError("Gráfico de radar requer pelo menos uma coluna para séries")
+            config = ApexChartsConverter.convert_radar_chart(data, x, series_cols, title, options)
+        
+        else:
+            raise ValueError(f"Tipo de gráfico não suportado para ApexCharts: {chart_type}")
+        
+        # Retorna a resposta com a configuração do gráfico
+        logger.info(f"Configuração ApexCharts gerada para gráfico: {chart_type}")
+        return ChartResponse(config, chart_format="apex")
     
     def sanitize_query(self, query: str) -> str:
         """
