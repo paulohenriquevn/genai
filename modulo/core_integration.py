@@ -562,7 +562,7 @@ class AnalysisEngine:
                 for table in table_refs:
                     if table not in self.datasets:
                         raise ValueError(f"Tabela '{table}' não encontrada nos datasets carregados. " + 
-                                       f"Datasets disponíveis: {', '.join(self.datasets.keys())}")
+                                    f"Datasets disponíveis: {', '.join(self.datasets.keys())}")
             
             def register_custom_sql_functions(con: duckdb.DuckDBPyConnection) -> None:
                 """

@@ -1,7 +1,3 @@
-""" Base class to implement a new Prompt
-In order to better handle the instructions, this prompt module is written.
-"""
-
 import os
 import re
 from typing import Optional
