@@ -183,6 +183,34 @@ python -m testes.run_all_tests --all
 - Consultas muito complexas podem exigir ajustes
 - Qualidade das respostas varia com a qualidade dos dados
 
+## Fluxo Alternativo para Falhas da LLM
+
+O sistema implementa um fluxo robusto para lidar com falhas na geração ou execução de consultas:
+
+### Detecção de Entidades Inexistentes
+- Antes de chamar a LLM, o sistema verifica se a consulta menciona entidades que não existem nos dados
+- Oferece resposta explicativa com alternativas baseadas nos dados disponíveis
+
+### Reformulação Automática
+- Quando uma consulta falha, o sistema tenta reformulá-la automaticamente
+- Adapta conceitos não mapeados para equivalentes disponíveis nos dados
+- Suporta até 3 tentativas de reformulação antes de oferecer alternativas
+
+### Coleta de Feedback do Usuário
+- Permite que o usuário forneça feedback para melhorar a resposta
+- Armazena o feedback para análise e melhorias futuras
+- Usa o feedback para refinar a consulta em tempo real
+
+### Sugestões Predefinidas
+- Após múltiplas falhas, oferece sugestões de consultas alternativas
+- Gera opções baseadas nos datasets e metadados disponíveis
+- Ajuda o usuário a explorar os dados de maneira eficaz
+
+Para testar o fluxo alternativo, execute:
+```bash
+python fallback_flow_example.py
+```
+
 ## Contribuição
 
 1. Faça um fork do repositório
