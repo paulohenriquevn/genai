@@ -9,6 +9,8 @@ outputs/**
 # C extensions
 *.so
 **output**
+**query_cache**
+**query_cache/**
 
 # Distribution / packaging
 .Python
