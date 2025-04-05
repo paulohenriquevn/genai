@@ -10,7 +10,6 @@ O Sistema de Consulta em Linguagem Natural é uma solução avançada que permit
 - **Suporte a Múltiplas Fontes de Dados**: Integração com CSV, bancos de dados, e outras fontes
 - **Visualizações Automáticas**: Geração de gráficos e visualizações de dados
 - **Integração com Modelos de IA**: Utiliza modelos de linguagem para geração de código
-- **API REST**: Interface para integração com outras aplicações
 
 ## Arquitetura do Sistema
 

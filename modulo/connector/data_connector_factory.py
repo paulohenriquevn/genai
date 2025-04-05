@@ -2,11 +2,14 @@ import os
 import json
 import pandas as pd
 import logging
-from typing import Any, Dict, Union
+import importlib
+from typing import Any, Dict, Union, Type
 
 from connector.metadata import MetadataRegistry
 from connector.semantic_layer_schema import SemanticSchema
 from connector.view_loader_and_transformer import create_view_from_sources
+from connector.data_connector import DataConnector
+from connector.datasource_config import DataSourceConfig
 
 logging.basicConfig(
     level=logging.INFO,
@@ -22,26 +25,63 @@ class DataConnectorFactory:
     Extends the standard factory to create connectors that recognize and
     utilize both column metadata and semantic schema.
     """
-    _connectors = {
-        'csv': 'CsvConnector',  # Using string to avoid circular imports
-        'postgres': 'PostgresConnector',
-        'duckdb_csv': 'DuckDBCsvConnector'
+    # Map of connector types to their module/class information
+    _connector_registry = {
+        'csv': ('connector.csv_connector', 'CsvConnector'),
+        'postgres': ('connector.postgres_connector', 'PostgresConnector'),
+        'duckdb_csv': ('connector.duckdb_csv_connector', 'DuckDBCsvConnector')
     }
     
+    # Cache of already loaded connector classes
+    _connector_classes = {}
+    
     @classmethod
-    def register_connector(cls, source_type: str, connector_class) -> None:
+    def register_connector(cls, source_type: str, connector_info: tuple) -> None:
         """
         Register a new connector type in the factory.
         
         Args:
             source_type: Data source type name.
-            connector_class: Connector class to register.
+            connector_info: Tuple of (module_path, class_name) or connector class
         """
-        cls._connectors[source_type] = connector_class
+        cls._connector_registry[source_type] = connector_info
         logger.info(f"Connector registered for type: {source_type}")
     
     @classmethod
-    def create_connector(cls, config) -> Any:
+    def _load_connector_class(cls, module_path: str, class_name: str) -> Type[DataConnector]:
+        """
+        Dynamically import and load a connector class.
+        
+        Args:
+            module_path: Path to the module containing the connector class
+            class_name: Name of the connector class
+            
+        Returns:
+            Type[DataConnector]: The connector class
+        """
+        cache_key = f"{module_path}.{class_name}"
+        
+        # Check if we've already loaded this class
+        if cache_key in cls._connector_classes:
+            return cls._connector_classes[cache_key]
+        
+        try:
+            # Dynamically import the module
+            module = importlib.import_module(module_path)
+            
+            # Get the class from the module
+            connector_class = getattr(module, class_name)
+            
+            # Cache the class for future use
+            cls._connector_classes[cache_key] = connector_class
+            
+            return connector_class
+        except (ImportError, AttributeError) as e:
+            logger.error(f"Error loading connector class {class_name} from {module_path}: {str(e)}")
+            raise ValueError(f"Failed to load connector class: {str(e)}")
+    
+    @classmethod
+    def create_connector(cls, config) -> DataConnector:
         """
         Create a connector with metadata and semantic layer support.
         
@@ -51,9 +91,6 @@ class DataConnectorFactory:
         Returns:
             DataConnector: Created connector.
         """
-        # Import connectors here to avoid circular imports
-        from modulo.connector.postgres_connector import CsvConnector, PostgresConnector, DuckDBCsvConnector, DataSourceConfig
-        
         # Convert config to DataSourceConfig if necessary
         if not isinstance(config, DataSourceConfig):
             config = DataSourceConfig.from_dict(config)
@@ -61,23 +98,21 @@ class DataConnectorFactory:
         # Create the appropriate connector based on type
         source_type = config.source_type
         
-        if source_type not in cls._connectors:
+        if source_type not in cls._connector_registry:
             raise ValueError(f"Unsupported connector type: {source_type}")
             
-        connector_class_name = cls._connectors[source_type]
+        connector_info = cls._connector_registry[source_type]
         
-        # If connector_class_name is a string, get the actual class
-        if isinstance(connector_class_name, str):
-            if connector_class_name == 'CsvConnector':
-                connector_class = CsvConnector
-            elif connector_class_name == 'PostgresConnector':
-                connector_class = PostgresConnector
-            elif connector_class_name == 'DuckDBCsvConnector':
-                connector_class = DuckDBCsvConnector
-            else:
-                raise ValueError(f"Unknown connector class name: {connector_class_name}")
+        # Handle different ways of specifying the connector
+        if isinstance(connector_info, tuple) and len(connector_info) == 2:
+            # It's a (module_path, class_name) tuple
+            module_path, class_name = connector_info
+            connector_class = cls._load_connector_class(module_path, class_name)
+        elif isinstance(connector_info, type) and issubclass(connector_info, DataConnector):
+            # It's already a class
+            connector_class = connector_info
         else:
-            connector_class = connector_class_name
+            raise ValueError(f"Invalid connector specification for {source_type}: {connector_info}")
         
         # Create the connector with the enhanced configuration
         return connector_class(config)

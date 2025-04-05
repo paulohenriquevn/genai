@@ -4,15 +4,14 @@ import logging
 import sqlglot
 from sqlglot import select, parse_one, exp
 from sqlglot.errors import ParseError
-from sqlglot.expressions import Subquery
+from sqlglot.expressions import Subquery, Table, Column, Expression
 from sqlglot.optimizer.normalize_identifiers import normalize_identifiers
 from sqlglot.optimizer.qualify_columns import quote_identifiers
-from sqlglot.expressions import Subquery, Table, Column, Expression
 from typing import Dict, List, Optional, Any, Set, Tuple
 
-from query_builders.query_builder_base import BaseQueryBuilder
-from connector.semantic_layer_schema import SemanticSchema
+# Importação relativa somente uma vez da classe base
 from .query_builder_base import BaseQueryBuilder
+from connector.semantic_layer_schema import SemanticSchema
 
 
 class LocalQueryBuilder(BaseQueryBuilder):
@@ -1194,25 +1193,7 @@ class SQLDialectTranspiler:
         return query
 
 
-class SQLParser:
-    @staticmethod
-    def transpile_sql_dialect(query: str, source_dialect: str, target_dialect: str) -> str:
-        """
-        Método estático para transpilação de queries.
-        
-        Args:
-            query (str): Query original
-            source_dialect (str): Dialeto de origem
-            target_dialect (str): Dialeto de destino
-        
-        Returns:
-            str: Query transpilada
-        """
-        try:
-            return SQLDialectTranspiler.transpile(query, source_dialect, target_dialect)
-        except Exception as e:
-            print(f"Erro na transpilação: {e}")
-            return query  # Retorna a query original em caso de erro
+# Usa SQLParser definido em query_builder_base.py
 
 
 class QueryBuilderFacade:

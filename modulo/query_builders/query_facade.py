@@ -426,8 +426,8 @@ class QueryBuilderFacade:
         Returns:
             str: Query SQL convertida.
         """
-        from query_builders.query_builders_implementation import SQLParser
+        from query_builders.query_builder_base import SQLParser
         
         return SQLParser.transpile_sql_dialect(
-            query, target_dialect, from_dialect
+            query, to_dialect=target_dialect, from_dialect=from_dialect
         )
