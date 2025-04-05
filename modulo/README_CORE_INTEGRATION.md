@@ -126,17 +126,51 @@ Sistema completo de logging para rastreamento de operações:
 - Informações de tempo de processamento
 - Armazenamento de código gerado
 
-## Considerações e Limitações
+## Integração com Modelos de Linguagem (LLM)
 
-1. **Execução Real de LLM**
-   - A implementação atual simula a geração de código que viria de um LLM
-   - O método `_generate_simulated_code()` fornece exemplos pré-definidos para 5 tipos de consultas, incluindo:
-     * Total de vendas por cliente
-     * Principais motivos de vendas perdidas
-     * Geração de gráficos de barra para impacto financeiro
-     * Valor médio de vendas
-     * Filtros para clientes de uma cidade específica
-   - Para uso em produção, substitua a simulação por uma API LLM real
+O sistema agora inclui integração completa com vários provedores de LLM para geração de código Python:
+
+1. **Provedores de LLM Suportados**
+   - **OpenAI**: GPT-3.5-Turbo e GPT-4
+   - **Anthropic**: Claude (todos os modelos disponíveis)
+   - **Hugging Face**: Modelos hospedados
+   - **Modelos locais**: LLama, Mistral e outros
+   - **Mock**: Modo simulado para testes sem API
+
+2. **Inicialização de Modelo**
+   ```python
+   # Inicialização com modelo OpenAI
+   engine = AnalysisEngine(
+       model_type="openai",
+       model_name="gpt-4",
+       api_key="sua-chave-api"
+   )
+   
+   # Inicialização com modelo Anthropic
+   engine = AnalysisEngine(
+       model_type="anthropic",
+       model_name="claude-3-haiku-20240307",
+       api_key="sua-chave-api"
+   )
+   
+   # Modo simulado (para testes)
+   engine = AnalysisEngine(model_type="mock")
+   ```
+
+3. **Geração de Prompts Avançada**
+   - Prompts enriquecidos com detalhes dos datasets disponíveis
+   - Incluem exemplos de dados para melhorar a precisão
+   - Instruções específicas para geração de código Python executável
+
+4. **Tratamento Automático de Erros**
+   - Sistema de correção automática de erros com feedback detalhado
+   - Tentativa inteligente de correção antes de reportar falha
+   - Mensagens de erro contextualizadas
+
+5. **Execução SQL Robusta**
+   - Suporte para DuckDB para consultas SQL avançadas
+   - Fallback para pandas se DuckDB não estiver disponível
+   - Logging de consultas SQL para auditoria
 
 2. **Execução SQL**
    - O método `execute_direct_query` é limitado ao pandas

@@ -11,8 +11,6 @@ Exemplos:
 """
 
 import os
-import pandas as pd
-import matplotlib.pyplot as plt
 from core_integration import AnalysisEngine
 from core.response.dataframe import DataFrameResponse
 from core.response.chart import ChartResponse
@@ -25,11 +23,36 @@ def main():
     """Função principal para demonstração do módulo de integração core."""
     print("🔧 Inicializando Motor de Análise...")
     
+    # Verifica variáveis de ambiente para chaves de API
+    openai_key = os.environ.get("OPENAI_API_KEY")
+    anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+    
+    # Determina o modelo a usar com base nas chaves disponíveis
+    model_type = "mock"  # Padrão
+    model_name = None
+    api_key = None
+    
+    if openai_key:
+        model_type = "openai"
+        model_name = "gpt-3.5-turbo"
+        api_key = openai_key
+        print("  🔑 Chave OpenAI encontrada. Usando modelo GPT-3.5.")
+    elif anthropic_key:
+        model_type = "anthropic"
+        model_name = "claude-3-haiku-20240307"
+        api_key = anthropic_key
+        print("  🔑 Chave Anthropic encontrada. Usando modelo Claude Haiku.")
+    else:
+        print("  ℹ️ Nenhuma chave de API encontrada. Usando modo simulado (mock).")
+    
     # Inicializa o motor de análise
     engine = AnalysisEngine(
         agent_description="Assistente avançado de análise de dados com foco em insights de vendas",
         default_output_type="dataframe",
-        direct_sql=False
+        direct_sql=True,
+        model_type=model_type,
+        model_name=model_name,
+        api_key=api_key
     )
     
     # Carrega os datasets disponíveis
@@ -63,7 +86,11 @@ def main():
         "Quais são os 3 principais motivos de vendas perdidas?",
         "Gere um gráfico de barras mostrando o impacto financeiro por motivo de vendas perdidas",
         "Qual é o valor médio de vendas?",
-        "Mostre os clientes de São Paulo"
+        "Mostre os clientes de São Paulo",
+        "Quais produtos estão com estoque baixo?",
+        "Qual é o total de vendas por mês?",
+        "Quais são os produtos mais vendidos?",
+        "Mostre as vendas por região",
     ]
     
     # Processar algumas consultas de exemplo
