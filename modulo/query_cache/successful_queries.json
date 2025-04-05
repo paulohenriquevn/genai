@@ -1,37 +1,37 @@
 {
   "qual é o total de vendas por cliente?": {
-    "timestamp": 1743825612.4796596,
+    "timestamp": 1743857641.673926,
     "original_query": "Qual é o total de vendas por cliente?",
-    "code": "execute_sql_query('SELECT c.nome as cliente, SUM(v.valor) as total_vendas FROM vendas v JOIN clientes c ON v.id_cliente = c.id_cliente GROUP BY c.nome')"
+    "code": "sql_query = '''\nSELECT c.nome as cliente, SUM(v.valor) as total_vendas\nFROM vendas v\nJOIN clientes c ON v.id_cliente = c.id_cliente\nGROUP BY c.nome\n'''\ndf = execute_sql_query(sql_query)\n\nresult = {\"type\": \"dataframe\", \"value\": df}"
   },
   "quais são os 3 principais motivos de vendas perdidas?": {
-    "timestamp": 1743825613.6201663,
+    "timestamp": 1743857642.685423,
     "original_query": "Quais são os 3 principais motivos de vendas perdidas?",
-    "code": "execute_sql_query(\"\"\"\nSELECT Motivo, COUNT(*) as Total\nFROM vendas_perdidas\nGROUP BY Motivo\nORDER BY Total DESC\nLIMIT 3\n\"\"\")"
+    "code": "sql_query = '''\nSELECT Motivo, COUNT(*) as Total\nFROM vendas_perdidas\nGROUP BY Motivo\nORDER BY Total DESC\nLIMIT 3\n'''\n\nresult = {\"type\": \"dataframe\", \"value\": execute_sql_query(sql_query)}"
   },
   "gere um gráfico de barras mostrando o impacto financeiro por motivo de vendas perdidas": {
-    "timestamp": 1743825615.8689234,
+    "timestamp": 1743857645.3403945,
     "original_query": "Gere um gráfico de barras mostrando o impacto financeiro por motivo de vendas perdidas",
-    "code": "import matplotlib.pyplot as plt\n\n# Consulta SQL para obter o impacto financeiro por motivo de vendas perdidas\nsql_query = '''\nSELECT Motivo, SUM(ImpactoFinanceiro) AS TotalImpactoFinanceiro\nFROM vendas_perdidas\nGROUP BY Motivo\n'''\n\n# Executar a consulta SQL\ndf = execute_sql_query(sql_query)\n\n# Gerar o gráfico de barras\nplt.figure(figsize=(12, 6))\nplt.bar(df['Motivo'], df['TotalImpactoFinanceiro'], color='skyblue')\nplt.xlabel('Motivo de Vendas Perdidas')\nplt.ylabel('Impacto Financeiro')\nplt.title('Impacto Financeiro por Motivo de Vendas Perdidas')\nplt.xticks(rotation=45)\nplt.tight_layout()\n\n# Salvar o gráfico em um arquivo\nplt.savefig('impacto_financeiro_por_motivo_vendas_perdidas.png')\n\n# Definir o resultado\nresult = {\"type\": \"plot\", \"value\": plt}"
+    "code": "import matplotlib.pyplot as plt\n\n# Consulta SQL para obter o impacto financeiro por motivo de vendas perdidas\nsql_query = '''\nSELECT Motivo, SUM(ImpactoFinanceiro) as TotalImpactoFinanceiro\nFROM vendas_perdidas\nGROUP BY Motivo\n'''\n\n# Executar a consulta SQL\ndf = execute_sql_query(sql_query)\n\n# Gerar o gráfico de barras\nplt.figure(figsize=(12, 6))\nplt.bar(df['Motivo'], df['TotalImpactoFinanceiro'], color='skyblue')\nplt.xlabel('Motivo de Vendas Perdidas')\nplt.ylabel('Impacto Financeiro')\nplt.title('Impacto Financeiro por Motivo de Vendas Perdidas')\nplt.xticks(rotation=45)\nplt.tight_layout()\n\n# Salvar o gráfico em um arquivo\nplt.savefig('impacto_financeiro_por_motivo_vendas_perdidas.png')\n\n# Definir o resultado\nresult = {\"type\": \"plot\", \"value\": plt}"
   },
   "qual é o valor médio de vendas?": {
-    "timestamp": 1743825617.1994317,
+    "timestamp": 1743857646.3282363,
     "original_query": "Qual é o valor médio de vendas?",
-    "code": "sql_query = \"SELECT AVG(valor) as media_vendas FROM vendas\"\ndf = execute_sql_query(sql_query)\nresult = {\"type\": \"dataframe\", \"value\": df}"
+    "code": "import matplotlib.pyplot as plt\n\nsql_query = \"SELECT AVG(valor) as media_vendas FROM vendas\"\ndf_result = execute_sql_query(sql_query)\n\nresult = {\"type\": \"number\", \"value\": df_result['media_vendas'][0]}"
   },
   "mostre os clientes de são paulo": {
-    "timestamp": 1743825618.4327805,
+    "timestamp": 1743857647.5082455,
     "original_query": "Mostre os clientes de São Paulo",
-    "code": "import matplotlib.pyplot as plt\n\n# Consulta SQL para encontrar os clientes de São Paulo\nsql_query = \"SELECT * FROM clientes WHERE cidade = 'São Paulo'\"\nclientes_sp = execute_sql_query(sql_query)\n\nresult = {\"type\": \"dataframe\", \"value\": clientes_sp}"
+    "code": "import matplotlib.pyplot as plt\n\n# Consulta SQL para obter os clientes de São Paulo\nsql_query = '''\nSELECT * \nFROM clientes \nWHERE cidade = 'São Paulo'\n'''\n\n# Executar a consulta SQL\ndf_clientes_sp = execute_sql_query(sql_query)\n\n# Definir o resultado como um DataFrame\nresult = {\"type\": \"dataframe\", \"value\": df_clientes_sp}"
   },
   "qual é o total de vendas por mês?": {
-    "timestamp": 1743825619.5944023,
+    "timestamp": 1743857648.236802,
     "original_query": "Qual é o total de vendas por mês?",
-    "code": "query = '''\nSELECT strftime('%Y-%m', data) as mes, SUM(valor) as total_vendas\nFROM vendas\nGROUP BY mes\n'''\ndf = execute_sql_query(query)\n\nresult = {\"type\": \"dataframe\", \"value\": df}"
+    "code": "execute_sql_query(\"\"\"\nSELECT strftime('%Y-%m', data) as mes, SUM(valor) as total_vendas\nFROM vendas\nGROUP BY mes\n\"\"\")"
   },
   "mostre as vendas por região": {
-    "timestamp": 1743825620.4736545,
+    "timestamp": 1743857649.6161556,
     "original_query": "Mostre as vendas por região",
-    "code": "execute_sql_query('SELECT c.estado as regiao, SUM(v.valor) as total_vendas FROM vendas v JOIN clientes c ON v.id_cliente = c.id_cliente GROUP BY c.estado')"
+    "code": "sql_query = '''\nSELECT c.estado AS regiao, SUM(v.valor) AS total_vendas\nFROM vendas v\nJOIN clientes c ON v.id_cliente = c.id_cliente\nGROUP BY c.estado\n'''\ndf = execute_sql_query(sql_query)\n\nresult = {\"type\": \"dataframe\", \"value\": df}"
   }
 }

@@ -224,12 +224,43 @@ python fallback_flow_example.py
 - Consulte a documentação
 - Entre em contato com o mantenedor
 
+## Refatoração da Arquitetura (Abril/2025)
+
+Recentemente realizamos uma refatoração substancial do código para melhorar a manutenibilidade e extensibilidade do sistema. As principais melhorias incluem:
+
+### 1. Aplicação do Princípio de Responsabilidade Única (SRP)
+- O arquivo monolítico `core_integration.py` foi dividido em módulos menores e especializados
+- Cada classe agora tem uma única responsabilidade bem definida
+- Código mais organizado e fácil de entender
+
+### 2. Nova Arquitetura Modular
+- **Dataset**: Gerenciamento de dados e metadados (`core/engine/dataset.py`)
+- **SQLExecutor**: Execução de consultas SQL (`core/engine/sql_executor.py`)
+- **AlternativeFlow**: Tratamento de erros e fluxos alternativos (`core/engine/alternative_flow.py`)
+- **FeedbackManager**: Gestão de feedback e sugestões (`core/engine/feedback_manager.py`)
+- **AnalysisEngine**: Orquestração dos componentes (`core/engine/analysis_engine.py`)
+
+### 3. Interface Simplificada
+- Nova interface de alto nível `NaturalLanguageQuerySystem` para uso facilitado
+- Exemplo de uso em `example_natural_language_query.py`
+- Documentação atualizada em `core/engine/README.md`
+
+### 4. Benefícios da Refatoração
+- Maior testabilidade dos componentes individuais
+- Facilitação da extensão de funcionalidades
+- Melhor organização de dependências
+- Código mais legível e autodocumentado
+
+Para mais detalhes sobre a nova arquitetura, consulte a documentação em `core/engine/README.md`.
+
 ## Próximos Passos
 
 - Melhorar a precisão dos modelos de linguagem
 - Adicionar mais tipos de visualizações
 - Expandir suporte a fontes de dados
 - Implementar cache de consultas
+- Desenvolver testes unitários para os novos componentes
+- Adicionar novas funcionalidades usando a arquitetura modular
 
 ---
 
