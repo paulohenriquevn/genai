@@ -21,6 +21,9 @@ from core.exceptions import QueryExecutionError
 # Importação do módulo de integração com LLMs
 from llm_integration import LLMIntegration, LLMQueryGenerator
 
+# Importação do analisador de datasets
+from utils.dataset_analyzer import DatasetAnalyzer
+
 # Configura o logger
 logging.basicConfig(
     level=logging.INFO,
@@ -36,6 +39,7 @@ logger = logging.getLogger("core_integration")
 class Dataset:
     """
     Representa um dataset com metadados e descrição para uso no motor de análise.
+    Inclui análise automática de estrutura e relacionamentos.
     """
     
     def __init__(
@@ -43,7 +47,8 @@ class Dataset:
         dataframe: pd.DataFrame, 
         name: str, 
         description: str = "", 
-        schema: Dict[str, str] = None
+        schema: Dict[str, str] = None,
+        auto_analyze: bool = True
     ):
         """
         Inicializa um objeto Dataset.
@@ -53,37 +58,131 @@ class Dataset:
             name: Nome do dataset
             description: Descrição do conjunto de dados
             schema: Dicionário de metadados sobre as colunas (opcional)
+            auto_analyze: Se True, faz análise automática da estrutura do dataset
         """
         self.dataframe = dataframe
         self.name = name
         self.description = description
         self.schema = schema or {}
+        self.analyzed_metadata = {}
+        self.primary_key = None
+        self.column_types = {}
+        self.potential_foreign_keys = []
+        
+        # Analisar automaticamente se solicitado
+        if auto_analyze:
+            self._analyze_structure()
+    
+    def _analyze_structure(self):
+        """
+        Analisa a estrutura do dataset para detectar metadados importantes.
+        """
+        # Usa o DatasetAnalyzer para obter metadados detalhados
+        analyzer = DatasetAnalyzer()
+        analyzer.add_dataset(self.name, self.dataframe)
+        analysis_result = analyzer.analyze_all()
+        
+        # Extrai os metadados do dataset analisado
+        if self.name in analysis_result.get("metadata", {}):
+            dataset_meta = analysis_result["metadata"][self.name]
+            
+            # Armazena os metadados completos
+            self.analyzed_metadata = dataset_meta
+            
+            # Extrai informações principais
+            self.primary_key = dataset_meta.get("primary_key")
+            self.potential_foreign_keys = dataset_meta.get("potential_foreign_keys", [])
+            
+            # Extrai tipos de dados sugeridos para cada coluna
+            self.column_types = {}
+            for col_name, col_meta in dataset_meta.get("columns", {}).items():
+                self.column_types[col_name] = col_meta.get("suggested_type", "unknown")
+                
+                # Atualiza o schema com descrições mais ricas
+                if col_meta.get("suggested_type") and "description" not in self.schema.get(col_name, {}):
+                    # Usa a descrição gerada pelo analisador
+                    self.schema[col_name] = col_meta.get("description", f"Column {col_name}")
     
     def to_json(self) -> Dict[str, Any]:
         """
         Converte o dataset para um formato JSON para uso em prompts.
+        Inclui metadados avançados da análise automática.
         
         Returns:
             Dict com informações sobre o dataset
         """
-        # Cria uma representação simplificada para o LLM
+        # Cria uma representação enriquecida para o LLM
         columns = []
         for col in self.dataframe.columns:
-            col_type = str(self.dataframe[col].dtype)
+            # Tipo inferido da análise automática ou tipo pandas
+            col_type = self.column_types.get(col, str(self.dataframe[col].dtype))
+            
+            # Amostra de dados
             sample = str(self.dataframe[col].iloc[0]) if len(self.dataframe) > 0 else ""
             
-            # Tenta obter descrição do schema se disponível
+            # Descrição rica baseada na análise ou no schema fornecido
             description = self.schema.get(col, f"Column {col} of type {col_type}")
             
-            columns.append({
+            # Adiciona informações sobre chaves e relacionamentos
+            metadata = {}
+            if col == self.primary_key:
+                metadata["is_primary_key"] = True
+                
+            if col in self.potential_foreign_keys:
+                metadata["is_foreign_key"] = True
+                
+            # Adiciona metadados detalhados da análise
+            if self.analyzed_metadata and "columns" in self.analyzed_metadata:
+                if col in self.analyzed_metadata["columns"]:
+                    col_meta = self.analyzed_metadata["columns"][col]
+                    
+                    # Adiciona estatísticas relevantes
+                    if "stats" in col_meta:
+                        metadata["stats"] = col_meta["stats"]
+                    
+                    # Adiciona informações específicas do tipo
+                    if col_type == "numeric" and "numeric_stats" in col_meta:
+                        metadata["numeric_stats"] = col_meta["numeric_stats"]
+                    elif col_type == "date" and "temporal_stats" in col_meta:
+                        metadata["temporal_stats"] = col_meta["temporal_stats"]
+                    elif col_type == "categorical" and "top_values" in col_meta:
+                        metadata["top_values"] = col_meta["top_values"]
+            
+            # Monta o objeto de coluna completo
+            column_info = {
                 "name": col,
                 "type": col_type,
                 "sample": sample,
                 "description": description
-            })
+            }
+            
+            # Adiciona metadados se existirem
+            if metadata:
+                column_info["metadata"] = metadata
+                
+            columns.append(column_info)
         
-        # Estrutura completa
-        return {
+        # Relações detectadas
+        relationships = []
+        if self.analyzed_metadata and "relationships" in self.analyzed_metadata:
+            rel_info = self.analyzed_metadata["relationships"]
+            if "outgoing" in rel_info:
+                for rel in rel_info["outgoing"]:
+                    relationships.append({
+                        "from": f"{self.name}.{rel['source_column']}",
+                        "to": f"{rel['target_dataset']}.{rel['target_column']}",
+                        "type": rel.get("type", "many_to_one")
+                    })
+            if "incoming" in rel_info:
+                for rel in rel_info["incoming"]:
+                    relationships.append({
+                        "from": f"{rel['source_dataset']}.{rel['source_column']}",
+                        "to": f"{self.name}.{rel['target_column']}",
+                        "type": rel.get("type", "many_to_one")
+                    })
+        
+        # Estrutura completa com informações enriquecidas
+        result = {
             "name": self.name,
             "description": self.description,
             "row_count": len(self.dataframe),
@@ -91,6 +190,16 @@ class Dataset:
             "columns": columns,
             "sample": self.dataframe.head(3).to_dict(orient="records")
         }
+        
+        # Adiciona informações de chave primária se detectada
+        if self.primary_key:
+            result["primary_key"] = self.primary_key
+            
+        # Adiciona relações se existirem
+        if relationships:
+            result["relationships"] = relationships
+            
+        return result
         
     def serialize_dataframe(self) -> Dict[str, Any]:
         """
@@ -869,6 +978,7 @@ class AnalysisEngine:
     def _generate_prompt(self, query: str) -> str:
         """
         Gera um prompt detalhado para o LLM com informações sobre datasets disponíveis.
+        Inclui metadados avançados e relacionamentos detectados pelo analisador.
         
         Args:
             query: Consulta em linguagem natural
@@ -879,21 +989,76 @@ class AnalysisEngine:
         # Adiciona a consulta ao histórico
         self.agent_state.memory.add_message(query)
         
-        # Informações sobre datasets disponíveis
-        datasets_info = "\n".join([
-            f"Dataset '{name}':\n" +
-            f"  - Descrição: {dataset.description}\n" +
-            f"  - Registros: {len(dataset.dataframe)}\n" +
-            f"  - Colunas: {', '.join(dataset.dataframe.columns)}\n" +
-            f"  - Tipos: {', '.join([f'{col}: {dataset.dataframe[col].dtype}' for col in dataset.dataframe.columns])}\n"
-            for name, dataset in self.datasets.items()
-        ])
+        # Coleta todas as relações detectadas entre datasets
+        all_relationships = []
+        for name, dataset in self.datasets.items():
+            if hasattr(dataset, 'analyzed_metadata') and dataset.analyzed_metadata:
+                if 'relationships' in dataset.analyzed_metadata:
+                    rel_info = dataset.analyzed_metadata['relationships']
+                    
+                    # Relações outgoing
+                    if 'outgoing' in rel_info:
+                        for rel in rel_info['outgoing']:
+                            all_relationships.append(
+                                f"- {name}.{rel['source_column']} → {rel['target_dataset']}.{rel['target_column']}"
+                            )
+                    
+        # Informações detalhadas dos datasets com metadados enriquecidos
+        datasets_info = []
+        for name, dataset in self.datasets.items():
+            # Informações básicas
+            dataset_info = [
+                f"Dataset '{name}':",
+                f"  - Descrição: {dataset.description}",
+                f"  - Registros: {len(dataset.dataframe)}",
+                f"  - Colunas: {len(dataset.dataframe.columns)}"
+            ]
+            
+            # Adiciona informação de chave primária se detectada
+            if hasattr(dataset, 'primary_key') and dataset.primary_key:
+                dataset_info.append(f"  - Chave Primária: {dataset.primary_key}")
+            
+            # Adiciona informações de colunas com tipos detectados
+            column_info = []
+            for col in dataset.dataframe.columns:
+                # Usa o tipo detectado pelo analisador quando disponível
+                if hasattr(dataset, 'column_types') and col in dataset.column_types:
+                    col_type = dataset.column_types[col]
+                else:
+                    col_type = str(dataset.dataframe[col].dtype)
+                
+                # Marca colunas especiais (chaves primárias, estrangeiras)
+                suffix = ""
+                if hasattr(dataset, 'primary_key') and col == dataset.primary_key:
+                    suffix = " (PK)"
+                elif hasattr(dataset, 'potential_foreign_keys') and col in dataset.potential_foreign_keys:
+                    suffix = " (FK)"
+                
+                column_info.append(f"    * {col}: {col_type}{suffix}")
+            
+            dataset_info.append("  - Detalhes das colunas:")
+            dataset_info.extend(column_info)
+            
+            datasets_info.append("\n".join(dataset_info))
+        
+        # Junta todas as informações dos datasets
+        datasets_info_text = "\n\n".join(datasets_info)
         
         # Exemplos de valores para cada dataset
         dataset_samples = "\n".join([
             f"Exemplos de '{name}':\n{dataset.dataframe.head(2).to_string()}\n"
             for name, dataset in self.datasets.items()
         ])
+        
+        # Informações sobre relacionamentos detectados
+        relationships_info = ""
+        if all_relationships:
+            relationships_info = """
+            ## Relacionamentos Detectados Entre Datasets
+            
+            Os seguintes relacionamentos foram detectados entre os datasets:
+            
+            """ + "\n".join(all_relationships)
         
         # Informações sobre funções SQL suportadas
         sql_functions_info = """
@@ -929,17 +1094,12 @@ class AnalysisEngine:
         - CAST(valor AS tipo) - Converte para outro tipo de dados
         - valor::tipo - Converte para outro tipo no estilo PostgreSQL
         - CONVERT(tipo, valor) - Converte para outro tipo no estilo SQL Server/MySQL
-        
-        ### Exemplos válidos de consultas SQL
-        - SELECT * FROM vendas WHERE data >= DATE '2023-01-01'
-        - SELECT DATE_FORMAT(data, '%Y-%m') as mes, SUM(valor) FROM vendas GROUP BY mes
-        - SELECT strftime('%Y-%m', data) as mes, AVG(valor) FROM vendas GROUP BY mes
-        - SELECT c.nome, SUM(v.valor) FROM vendas v JOIN clientes c ON v.id_cliente = c.id_cliente GROUP BY c.nome
-        - SELECT EXTRACT(YEAR FROM data) as ano, EXTRACT(MONTH FROM data) as mes, SUM(valor) FROM vendas GROUP BY ano, mes
-        - SELECT id_cliente, GROUP_CONCAT(id_venda) as vendas FROM vendas GROUP BY id_cliente
         """
         
-        # Construindo o prompt
+        # Exemplos de consultas SQL baseados nas tabelas reais
+        sql_examples = self._generate_sql_examples()
+        
+        # Construindo o prompt completo
         prompt = f"""
         # Instruções para Geração de Código Python
 
@@ -949,13 +1109,19 @@ class AnalysisEngine:
         
         ## Datasets Disponíveis
 
-        {datasets_info}
+        {datasets_info_text}
+        
+        {relationships_info}
         
         ## Exemplos de Dados
 
         {dataset_samples}
         
         {sql_functions_info}
+        
+        ## Exemplos de Consultas SQL Válidas
+        
+        {sql_examples}
         
         ## Requisitos
 
@@ -972,11 +1138,124 @@ class AnalysisEngine:
         - Para visualizações, use o tipo "plot" e salve o gráfico em um arquivo
         - Defina result = {{"type": "tipo_aqui", "value": valor_aqui}} ao final
         - NÃO inclua comentários explicativos, apenas o código funcional
-        - Use apenas os datasets indicados acima, NÃO tente usar tabelas inexistentes como 'produtos'
+        - Use apenas os datasets indicados acima, NÃO tente usar tabelas inexistentes
+        - Aproveite os relacionamentos detectados para fazer JOINs entre tabelas relacionadas
         - Adapte consultas SQL para compatibilidade com DuckDB usando as funções listadas acima
         """
         
         return prompt
+        
+    def _generate_sql_examples(self) -> str:
+        """
+        Gera exemplos de consultas SQL baseados nos datasets disponíveis.
+        
+        Returns:
+            str: Texto com exemplos de consultas SQL
+        """
+        examples = []
+        available_datasets = list(self.datasets.keys())
+        
+        if not available_datasets:
+            return "Nenhum dataset disponível para gerar exemplos."
+        
+        # Exemplo básico de seleção
+        if len(available_datasets) > 0:
+            ds_name = available_datasets[0]
+            ds = self.datasets[ds_name]
+            columns = list(ds.dataframe.columns)
+            
+            if columns:
+                examples.append(f"- SELECT * FROM {ds_name} LIMIT 5")
+                examples.append(f"- SELECT {', '.join(columns[:3])} FROM {ds_name}")
+        
+        # Exemplo de filtro
+        if len(available_datasets) > 0:
+            ds_name = available_datasets[0]
+            ds = self.datasets[ds_name]
+            
+            # Tenta encontrar uma coluna numérica para filtro
+            numeric_col = None
+            for col in ds.dataframe.columns:
+                if pd.api.types.is_numeric_dtype(ds.dataframe[col]):
+                    numeric_col = col
+                    break
+            
+            if numeric_col:
+                examples.append(f"- SELECT * FROM {ds_name} WHERE {numeric_col} > 100")
+        
+        # Exemplo de agregação
+        if len(available_datasets) > 0:
+            ds_name = available_datasets[0]
+            ds = self.datasets[ds_name]
+            
+            # Tenta encontrar colunas categóricas e numéricas
+            numeric_col = None
+            categorical_col = None
+            
+            for col in ds.dataframe.columns:
+                if pd.api.types.is_numeric_dtype(ds.dataframe[col]):
+                    numeric_col = col
+                elif pd.api.types.is_object_dtype(ds.dataframe[col]) and ds.dataframe[col].nunique() < 20:
+                    categorical_col = col
+            
+            if numeric_col and categorical_col:
+                examples.append(f"- SELECT {categorical_col}, SUM({numeric_col}) as total FROM {ds_name} GROUP BY {categorical_col}")
+        
+        # Exemplo de JOIN se tivermos relacionamentos
+        joins_added = False
+        
+        for ds_name, ds in self.datasets.items():
+            if hasattr(ds, 'analyzed_metadata') and 'relationships' in ds.analyzed_metadata:
+                rel_info = ds.analyzed_metadata['relationships']
+                
+                if 'outgoing' in rel_info and rel_info['outgoing']:
+                    # Pega a primeira relação
+                    rel = rel_info['outgoing'][0]
+                    source_col = rel['source_column']
+                    target_dataset = rel['target_dataset']
+                    target_col = rel['target_column']
+                    
+                    # Verifica se temos o dataset alvo
+                    if target_dataset in self.datasets:
+                        # Pega algumas colunas de cada dataset
+                        source_cols = list(ds.dataframe.columns)[:2]
+                        target_cols = list(self.datasets[target_dataset].dataframe.columns)[:2]
+                        
+                        join_example = f"""- SELECT s.{source_cols[0]}, t.{target_cols[0]}
+  FROM {ds_name} s
+  JOIN {target_dataset} t ON s.{source_col} = t.{target_col}"""
+                        
+                        examples.append(join_example)
+                        joins_added = True
+                        break
+            
+            if joins_added:
+                break
+        
+        # Exemplo com data se tivermos uma coluna de data
+        date_example_added = False
+        for ds_name, ds in self.datasets.items():
+            # Procura uma coluna com "data" no nome
+            date_col = None
+            for col in ds.dataframe.columns:
+                if "data" in col.lower() or "date" in col.lower() or "dt_" in col.lower():
+                    date_col = col
+                    break
+            
+            if date_col:
+                examples.append(f"- SELECT strftime('%Y-%m', {date_col}) as mes, COUNT(*) as total FROM {ds_name} GROUP BY mes")
+                date_example_added = True
+                break
+        
+        # Adiciona exemplo mais simples se não achou coluna de data
+        if not date_example_added and len(available_datasets) > 0:
+            examples.append("- SELECT EXTRACT(YEAR FROM CURRENT_DATE) as ano_atual")
+        
+        # Retorna todos os exemplos formatados
+        if examples:
+            return "\n".join(examples)
+        else:
+            return "Exemplos não disponíveis para os datasets atuais."
     
     def _format_result_for_parser(self, result: Any) -> Dict[str, Any]:
         """
