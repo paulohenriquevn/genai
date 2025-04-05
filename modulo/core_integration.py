@@ -2,7 +2,7 @@ import os
 import logging
 import pandas as pd
 import time
-from typing import Dict, List, Optional, Any, Union, Tuple
+from typing import Dict, List, Optional, Any, Union
 
 # Importação dos componentes core
 from core.code_executor import AdvancedDynamicCodeExecutor
@@ -19,7 +19,7 @@ from core.user_query import UserQuery
 from core.exceptions import QueryExecutionError
 
 # Importação do módulo de integração com LLMs
-from llm_integration import LLMIntegration, LLMQueryGenerator, ModelType, create_llm_integration
+from llm_integration import LLMIntegration, LLMQueryGenerator
 
 # Configura o logger
 logging.basicConfig(
@@ -149,9 +149,23 @@ class AnalysisEngine:
         self.code_executor = AdvancedDynamicCodeExecutor(
             timeout=timeout,
             max_output_size=max_output_size,
-            allowed_imports=["numpy", "pandas", "matplotlib", "scipy", "sympy", 
-                           "statistics", "re", "math", "random", "datetime", 
-                           "json", "itertools", "collections", "io", "base64"]
+            allowed_imports=[
+                "numpy", 
+                "pandas", 
+                "matplotlib", 
+                "scipy", 
+                "sympy", 
+                "statistics", 
+                "re", 
+                "math", 
+                "random", 
+                "datetime", 
+                "json", 
+                "itertools", 
+                "collections", 
+                "io", 
+                "base64"
+            ]
         )
         
         # Configuração do agente
@@ -186,8 +200,7 @@ class AnalysisEngine:
             
             # Cria o gerador de consultas
             self.query_generator = LLMQueryGenerator(llm_integration=llm_integration)
-            logger.info(f"Gerador LLM inicializado com modelo {model_type}" + 
-                       (f" ({model_name})" if model_name else ""))
+            logger.info(f"Gerador LLM inicializado com modelo {model_type}" + (f" ({model_name})" if model_name else ""))
         except Exception as e:
             # Em caso de erro, usa o modo mock
             logger.warning(f"Erro ao inicializar LLM: {str(e)}. Usando modo mock.")
