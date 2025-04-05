@@ -407,39 +407,18 @@ class AnalysisEngine:
                 if "tabela" in error_msg.lower() and ("não encontrada" in error_msg.lower() or "não existe" in error_msg.lower()):
                     return self.alternative_flow.handle_missing_table_error(error_msg)
                 
-                # Tenta corrigir o erro (opcional)
-                if "correction_attempt" not in execution_context:
-                    correction_result = self.alternative_flow.attempt_error_correction(
-                        query,
-                        generated_code,
-                        error_msg,
-                        execution_context,
-                        self.code_executor,
-                        self.response_parser,
-                        self.agent_state.output_type
-                    )
+                # Se ainda não esgotamos as tentativas
+                if retry_count < max_retries:
+                    # Tenta reformular a consulta
+                    rephrased_query = self.alternative_flow.rephrase_query(query, error_msg)
+                    logger.info(f"Consulta reformulada após erro de execução: {rephrased_query}")
                     
-                    # Se a correção também falhou e ainda não esgotamos as tentativas
-                    if correction_result.type == "error" and retry_count < max_retries:
-                        # Tenta reformular a consulta
-                        rephrased_query = self.alternative_flow.rephrase_query(query, error_msg)
-                        logger.info(f"Consulta reformulada: {rephrased_query}")
-                        
-                        # Reinicia o processamento com a consulta reformulada
-                        return self.process_query(rephrased_query, retry_count + 1, max_retries)
-                    
-                    # Se tentamos correção e ainda não funcionou, mas foi o último retry
-                    if correction_result.type == "error" and retry_count >= max_retries:
-                        # Oferece opções predefinidas
-                        return self.alternative_flow.offer_predefined_options(query, error_msg)
-                    
-                    return correction_result
+                    # Reinicia o processamento com a consulta reformulada
+                    return self.process_query(rephrased_query, retry_count + 1, max_retries)
                 
-                # Se chegou aqui, é uma falha após todas as tentativas
-                if retry_count >= max_retries:
-                    return self.alternative_flow.offer_predefined_options(query, error_msg)
-                
-                return ErrorResponse(f"Erro ao processar consulta: {error_msg}")
+                # Se chegou aqui, é o último retry e não conseguimos resolver o problema
+                # Oferece opções predefinidas
+                return self.alternative_flow.offer_predefined_options(query, error_msg)
             
             # Obtém o resultado da execução
             result = execution_result["result"]

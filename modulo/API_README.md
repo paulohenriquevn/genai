@@ -58,6 +58,7 @@ python run_api_server.py
   "type": "dataframe",
   "query": "Qual o total de vendas por mês?",
   "analysis": "A consulta retornou 12 registros com 2 colunas.",
+  "visualization_available": true,
   "data": [
     {"mes": "2023-01", "total": 1500},
     {"mes": "2023-02", "total": 2000},
@@ -66,15 +67,23 @@ python run_api_server.py
 }
 ```
 
-### Geração de Visualização
+**Nota:** Quando a resposta é um DataFrame, o campo `visualization_available` indica que é possível gerar uma visualização para esses dados usando o endpoint `/visualization/`.
+
+### Geração de Visualização Inteligente
 **Endpoint:** `POST /visualization/`
 
 **Parâmetros:**
 - `file_id`: ID do arquivo obtido no upload
-- `chart_type`: Tipo de gráfico (bar, line, pie, scatter, area, heatmap, radar)
-- `x_column`: Coluna para eixo X (opcional)
-- `y_column`: Coluna para eixo Y (opcional)
-- `title`: Título do gráfico (opcional)
+- `chart_type`: Tipo de gráfico (opcional - se não fornecido, será escolhido automaticamente)
+- `x_column`: Coluna para eixo X (opcional - se não fornecida, será determinada automaticamente)
+- `y_column`: Coluna para eixo Y (opcional - se não fornecida, será determinada automaticamente)
+- `title`: Título do gráfico (opcional - se não fornecido, será gerado automaticamente)
+
+**Comportamento:**
+- Usa o resultado da última consulta realizada para o arquivo
+- Escolhe automaticamente o tipo de gráfico mais adequado com base nos dados e na consulta
+- Identifica as colunas mais relevantes para os eixos X e Y
+- Gera um título significativo para a visualização
 
 **Resposta:**
 ```json
@@ -86,8 +95,11 @@ python run_api_server.py
     "title": {"text": "Vendas por Mês"}
   },
   "type": "chart",
+  "chart_type": "bar",
   "x_column": "mes",
-  "y_column": "vendas"
+  "y_column": "vendas",
+  "query": "Qual o total de vendas por mês?",
+  "description": "Visualização gerada a partir da consulta: 'Qual o total de vendas por mês?'. Gráfico do tipo bar mostrando vendas por mes."
 }
 ```
 
@@ -204,14 +216,55 @@ fetch('http://localhost:8000/query/', {
 .catch(error => console.error('Erro:', error));
 ```
 
-### Exemplo de Visualização Direta
+### Exemplo de Visualização Automática
+```javascript
+// Após receber uma resposta da consulta
+fetch('http://localhost:8000/query/', {
+  method: 'POST',
+  body: formData
+})
+.then(response => response.json())
+.then(queryResult => {
+  // Verifica se a visualização está disponível
+  if (queryResult.visualization_available) {
+    // Exibe um botão ou opção para visualizar
+    document.getElementById('visualize-btn').style.display = 'block';
+    
+    // Quando o usuário clicar no botão de visualização
+    document.getElementById('visualize-btn').onclick = function() {
+      const vizFormData = new FormData();
+      vizFormData.append('file_id', localStorage.getItem('fileId'));
+      // Não é necessário especificar outros parâmetros
+      
+      fetch('http://localhost:8000/visualization/', {
+        method: 'POST',
+        body: vizFormData
+      })
+      .then(response => response.json())
+      .then(data => {
+        // Renderiza o gráfico
+        const chart = new ApexCharts(document.querySelector("#chart"), data.chart);
+        chart.render();
+        
+        // Exibe a descrição da visualização
+        document.getElementById('chart-description').textContent = data.description;
+      })
+      .catch(error => console.error('Erro:', error));
+    };
+  }
+})
+.catch(error => console.error('Erro:', error));
+```
+
+### Exemplo de Visualização com Parâmetros Personalizados
 ```javascript
 const formData = new FormData();
 formData.append('file_id', localStorage.getItem('fileId'));
-formData.append('chart_type', 'bar');
+// Parâmetros opcionais para personalização
+formData.append('chart_type', 'line');
 formData.append('x_column', 'mes');
 formData.append('y_column', 'vendas');
-formData.append('title', 'Vendas Mensais');
+formData.append('title', 'Evolução de Vendas');
 
 fetch('http://localhost:8000/visualization/', {
   method: 'POST',

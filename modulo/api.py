@@ -36,6 +36,9 @@ file_manager = FileManager(base_dir="uploads")
 # Dicionário para armazenar engines por ID de sessão
 engines: Dict[str, AnalysisEngine] = {}
 
+# Armazena informações da sessão do usuário
+session_data: Dict[str, Dict[str, Any]] = {}
+
 @app.post("/upload/")
 async def upload_file(
     file: UploadFile = File(...),
@@ -95,6 +98,14 @@ async def process_query(
         # Processa a consulta
         result = engine.process_query(query)
         
+        # Inicializa dados da sessão se não existirem
+        if file_id not in session_data:
+            session_data[file_id] = {}
+        
+        # Armazena o último resultado e consulta na sessão
+        session_data[file_id]["last_query"] = query
+        session_data[file_id]["last_result"] = result
+        
         # Prepara resposta com base no tipo de resultado
         response = {
             "type": result.type,
@@ -106,6 +117,8 @@ async def process_query(
         if result.type == "dataframe":
             # Converte DataFrame para JSON
             response["data"] = result.value.to_dict(orient="records")
+            # Adiciona indicador de que uma visualização está disponível
+            response["visualization_available"] = True
         elif result.type == "chart":
             # Retorna configuração de gráfico
             if hasattr(result, "chart_format") and result.chart_format == "apex":
@@ -125,63 +138,161 @@ async def process_query(
 @app.post("/visualization/")
 async def generate_visualization(
     file_id: str = Form(...),
-    chart_type: str = Form(...),
+    chart_type: Optional[str] = Form(None),
     x_column: Optional[str] = Form(None),
     y_column: Optional[str] = Form(None),
     title: Optional[str] = Form(None)
 ):
     """
-    Gera uma visualização para os dados do arquivo.
+    Gera uma visualização inteligente baseada na última consulta do usuário.
+    Se parâmetros específicos não forem fornecidos, determina automaticamente o tipo de gráfico mais adequado.
     Retorna configuração JSON do gráfico (ApexCharts).
     """
     # Verifica se o ID do arquivo existe
     if file_id not in engines:
         raise HTTPException(status_code=404, detail="Arquivo não encontrado")
     
+    # Verifica se existe uma consulta anterior
+    if file_id not in session_data or "last_result" not in session_data[file_id]:
+        raise HTTPException(status_code=400, detail="Nenhuma consulta anterior encontrada. Faça uma consulta primeiro.")
+    
     engine = engines[file_id]
+    last_result = session_data[file_id]["last_result"]
+    last_query = session_data[file_id].get("last_query", "")
     
     try:
-        # Obtém o dataset principal
-        dataset = engine.datasets.get("dataset")
-        if not dataset:
-            dataset = next(iter(engine.datasets.values()))
+        # Se o último resultado já for um gráfico, retorna-o diretamente
+        if last_result.type == "chart" and hasattr(last_result, "chart_format") and last_result.chart_format == "apex":
+            return JSONResponse(content={
+                "chart": last_result.to_apex_json(),
+                "type": "chart",
+                "query": last_query,
+                "description": "Visualização da última consulta"
+            })
         
-        # Determina colunas x e y automaticamente se não fornecidas
-        if not x_column:
-            # Tenta encontrar a primeira coluna categórica ou de data
-            for col in dataset.dataframe.columns:
-                if dataset.dataframe[col].dtype == 'object' or pd.api.types.is_datetime64_any_dtype(dataset.dataframe[col]):
-                    x_column = col
-                    break
-            if not x_column and dataset.dataframe.columns.size > 0:
-                x_column = dataset.dataframe.columns[0]  # Fallback
+        # Se o último resultado for um DataFrame, gera uma visualização
+        if last_result.type == "dataframe":
+            df = last_result.value
+            
+            # Obtém o conjunto de dados
+            data = df
+            
+            # Determina colunas x e y automaticamente se não fornecidas
+            if not x_column:
+                # Tenta encontrar a primeira coluna categórica ou de data
+                for col in df.columns:
+                    if (df[col].dtype == 'object' or 
+                        pd.api.types.is_datetime64_any_dtype(df[col]) or 
+                        col.lower() in ['data', 'date', 'mes', 'month', 'ano', 'year', 'period', 'período', 'categoria', 'category']):
+                        x_column = col
+                        break
+                
+                # Se ainda não encontrou, usa a primeira coluna
+                if not x_column and not df.empty and df.columns.size > 0:
+                    x_column = df.columns[0]
+            
+            if not y_column:
+                # Tenta encontrar a primeira coluna numérica
+                for col in df.columns:
+                    if (pd.api.types.is_numeric_dtype(df[col]) and 
+                        col != x_column and 
+                        col.lower() not in ['id', 'código', 'code']):
+                        y_column = col
+                        break
+                
+                # Se ainda não encontrou, usa a segunda coluna ou a primeira
+                if not y_column and not df.empty:
+                    if df.columns.size > 1 and df.columns[1] != x_column:
+                        y_column = df.columns[1]
+                    else:
+                        # Fallback para a primeira coluna numérica
+                        for col in df.columns:
+                            if pd.api.types.is_numeric_dtype(df[col]):
+                                y_column = col
+                                break
+            
+            # Determina o tipo de gráfico mais adequado se não fornecido
+            if not chart_type:
+                # Analisa o conteúdo e a estrutura dos dados para sugerir um tipo de gráfico
+                
+                # Quantidade de valores únicos na coluna x
+                unique_x_values = df[x_column].nunique() if x_column and x_column in df.columns else 0
+                
+                # Verifica se a coluna x é temporal
+                is_time_series = (pd.api.types.is_datetime64_any_dtype(df[x_column]) if x_column and x_column in df.columns else False)
+                is_date_like = (is_time_series or 
+                                (x_column and x_column.lower() in ['data', 'date', 'mes', 'month', 'ano', 'year', 'dia', 'day']))
+                
+                # Número de colunas numéricas
+                num_numeric_cols = len(df.select_dtypes(include=['number']).columns)
+                
+                # Análise do conteúdo da consulta para inferir intenção
+                query_lower = last_query.lower()
+                
+                # Lógica para decidir o tipo de gráfico
+                if 'pizza' in query_lower or 'pie' in query_lower or 'distribuição' in query_lower or 'distribution' in query_lower:
+                    chart_type = 'pie'
+                elif 'área' in query_lower or 'area' in query_lower:
+                    chart_type = 'area'
+                elif 'linha' in query_lower or 'line' in query_lower or 'evolução' in query_lower or 'tendência' in query_lower or 'trend' in query_lower or 'evolution' in query_lower:
+                    chart_type = 'line'
+                elif 'dispersão' in query_lower or 'scatter' in query_lower or 'correlação' in query_lower or 'correlation' in query_lower:
+                    chart_type = 'scatter'
+                elif 'calor' in query_lower or 'heat' in query_lower:
+                    chart_type = 'heatmap'
+                else:
+                    # Decisão baseada na estrutura dos dados
+                    if is_date_like and unique_x_values > 1:
+                        chart_type = 'line'  # Séries temporais geralmente ficam boas em linhas
+                    elif df.shape[0] <= 10:  # Poucos dados
+                        if unique_x_values <= 12:
+                            chart_type = 'bar'  # Para categorias pequenas, barras são mais legíveis
+                        else:
+                            chart_type = 'line'  # Para muitas categorias, linhas são mais compactas
+                    else:  # Muitos dados
+                        chart_type = 'bar'  # Padrão para exploração de dados
+            
+            # Define um título significativo
+            if not title:
+                if y_column and x_column:
+                    title = f"{y_column} por {x_column}"
+                    # Capitaliza a primeira letra
+                    title = title[0].upper() + title[1:]
+                else:
+                    # Gera um título a partir da consulta
+                    title = f"Visualização de {last_query[:30]}{'...' if len(last_query) > 30 else ''}"
+            
+            # Gera o gráfico no formato ApexCharts
+            chart_response = engine.generate_chart(
+                data=data,
+                chart_type=chart_type,
+                x=x_column,
+                y=y_column,
+                title=title,
+                chart_format="apex"
+            )
+            
+            # Gera uma descrição da visualização
+            description = f"Visualização gerada a partir da consulta: '{last_query}'. "
+            description += f"Gráfico do tipo {chart_type} mostrando {y_column} por {x_column}."
+            
+            # Retorna a configuração do gráfico com contexto
+            return JSONResponse(content={
+                "chart": chart_response.to_apex_json(),
+                "type": "chart",
+                "chart_type": chart_type,
+                "x_column": x_column,
+                "y_column": y_column,
+                "query": last_query,
+                "description": description
+            })
         
-        if not y_column:
-            # Tenta encontrar a primeira coluna numérica
-            for col in dataset.dataframe.columns:
-                if pd.api.types.is_numeric_dtype(dataset.dataframe[col]):
-                    y_column = col
-                    break
-            if not y_column and dataset.dataframe.columns.size > 1:
-                y_column = dataset.dataframe.columns[1]  # Fallback
-        
-        # Gera o gráfico no formato ApexCharts
-        chart_response = engine.generate_chart(
-            data=dataset.dataframe,
-            chart_type=chart_type,
-            x=x_column,
-            y=y_column,
-            title=title or f"Visualização de {x_column} e {y_column}",
-            chart_format="apex"
+        # Se o resultado não for um DataFrame nem um gráfico
+        raise HTTPException(
+            status_code=400, 
+            detail="A última consulta não retornou dados que possam ser visualizados."
         )
         
-        # Retorna a configuração do gráfico
-        return JSONResponse(content={
-            "chart": chart_response.to_apex_json(),
-            "type": "chart",
-            "x_column": x_column,
-            "y_column": y_column
-        })
     except Exception as e:
         logger.error(f"Erro ao gerar visualização: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Erro ao gerar visualização: {str(e)}")
@@ -208,6 +319,11 @@ async def cleanup_session(file_id: str):
     if file_id in engines:
         # Remove o engine
         del engines[file_id]
+        
+        # Remove dados da sessão
+        if file_id in session_data:
+            del session_data[file_id]
+        
         # Remove o arquivo
         await file_manager.delete_file(file_id)
         return {"status": "success", "message": "Sessão encerrada com sucesso"}
